@@ -1,0 +1,13 @@
+ipython
+matplotlib 
+numpy 
+opencv-python
+pandas
+pathlib 
+Pillow
+scipy
+seaborn 
+sklearn
+torch
+torchvision
+
