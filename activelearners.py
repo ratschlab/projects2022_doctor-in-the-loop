@@ -156,7 +156,7 @@ class ProbCoverSampler(ActiveLearner):
             self.purity_radius= get_emperical_radius(0.95, self.dataset, self.pseudo_labels, search_range, search_step, plot_unpure_balls)
         print(f"ProbCover Sampler initialized with radius {self.purity_radius}")
         #Initialize the graph
-        self.graph=adjacency_graph(self.dataset, self.purity_radius)
+        self.graph= adjacency_graph(self.dataset, self.purity_radius)
 
     def query(self, M, B=1, n_initial=1):
         graph=self.graph.copy()

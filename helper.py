@@ -26,10 +26,12 @@ def adjacency_graph(dataset: pd.DataFrame, delta: float):
     n_vertices = len(dataset)
     graph = np.zeros(shape=(n_vertices, n_vertices))
     for u in range(n_vertices):
+        graph[u,u]=1
         for v in range(u):
             if np.linalg.norm(dataset.iloc[u, :-1] - dataset.iloc[v, :-1]) < delta:
                 graph[u, v] = 1
                 graph[v, u] = 1
+
     return graph
 
 def get_knn_labels(dataset, n_clusters, plot_kmeans=False):
