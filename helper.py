@@ -42,11 +42,13 @@ def get_knn_labels(dataset, n_clusters, plot_kmeans=False):
         plt.title("Pseudo-labels from k-means")
         plt.show()
     return pseudo_labels
+
 def get_nearest_neighbour(dataset):
     knn = NearestNeighbors(n_neighbors=2).fit(X=dataset.iloc[:, :-1])
     _, idx = knn.kneighbors(dataset.iloc[:, :-1])
     idx = idx[:, 1]  # contains the nearest neighbour for each point
     return idx
+
 def get_purity_labeled_data(dataset, pseudo_labels, nn_idx, delta):
     purity = np.zeros(len(dataset), dtype=int)
     graph = adjacency_graph(dataset, delta)
@@ -88,7 +90,7 @@ def estimate_emperical_purity(delta, dataset: pd.DataFrame, pseudo_labels, plot_
 
 
 def get_emperical_radius(alpha: float, dataset: pd.DataFrame, pseudo_labels,
-                         search_range=[0.05, 2], search_step=0.05, plot_unpure_balls=False):
+                         search_range=[0.5, 3.5], search_step=0.05, plot_unpure_balls=False):
     """
     Args:
         dataset: pd.DataFrame
@@ -99,30 +101,23 @@ def get_emperical_radius(alpha: float, dataset: pd.DataFrame, pseudo_labels,
         purity_radius: min{r: purity(r)>=alpha}
     """
 
-
-    #TODO: assert that alpha<=1
     # Get the indices of the 1 nearest neighbours for each point
     idx = get_nearest_neighbour(dataset)
     # Purity of each point
 
     radiuses = np.arange(search_range[0], search_range[1], search_step)
-    id = 0
-    best_purity = 1
 
-    while (best_purity >= alpha) & (id < len(radiuses)):
-        best_purity = get_purity_labeled_data(dataset, pseudo_labels, idx, radiuses[id])
-        best_purity=np.mean(best_purity)
-        print(radiuses[id], best_purity)
-        id += 1
+    while len(radiuses)>1:
+        id = int(len(radiuses) / 2)
+        purity= np.mean(get_purity_labeled_data(dataset, pseudo_labels, idx, radiuses[id]))
+        print(len(radiuses), radiuses[id], purity)
 
-    if id==1:
-        print(f"None of the radiuses in the specified region satisfy the purity threshold {alpha}")
-        print(f"We set radius to {radiuses[0]} which obtains purity {best_purity}")
-        purity_radius=radiuses[0]
-    else:
-        best_purity= get_purity_labeled_data(dataset, pseudo_labels, idx, radiuses[id-2])
-        print(f"Purity {np.mean(best_purity)} attained with radius {radiuses[id-2]}")
-        purity_radius= radiuses[id-2]
+        if purity>=alpha:
+            radiuses=radiuses[id:]
+        else:
+            radiuses=radiuses[:id]
+    print(radiuses)
+    purity_radius = radiuses[0]
 
     if plot_unpure_balls:
         purity = get_purity_labeled_data(dataset, pseudo_labels, idx, purity_radius)
@@ -137,3 +132,5 @@ def get_emperical_radius(alpha: float, dataset: pd.DataFrame, pseudo_labels,
         plt.title(f"Points that are not pure and their covering balls of radius {purity_radius}")
         plt.show()
     return purity_radius
+
+
