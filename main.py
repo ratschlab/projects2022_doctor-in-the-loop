@@ -4,7 +4,7 @@ import numpy as np
 import seaborn as sns
 from activelearners import ActiveLearner, RandomSampler, TypiclustSampler, ProbCoverSampler
 from datasets import PointClouds
-from helper import get_emperical_radius
+from helper import get_emperical_radius, estimate_emperical_purity, accuracy_clustering
 
 
 m = 400
@@ -18,7 +18,9 @@ M =15
 B=5
 K=5
 show_all_clusters=True
-
+clustered_2d_data = PointClouds(cluster_centers, cluster_std, cluster_samples)
+df= clustered_2d_data.dataset
+embed()
 def figure1():
     ## Initializing the dataset
     clustered_2d_data= PointClouds(cluster_centers, cluster_std, cluster_samples)
