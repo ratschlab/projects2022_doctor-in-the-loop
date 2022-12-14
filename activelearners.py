@@ -5,6 +5,9 @@ import numpy as np
 from sklearn.cluster import KMeans
 import seaborn as sns
 import matplotlib.pyplot as plt
+from helper import accuracy_clustering, check_cover, get_purity, get_radius, get_nearest_neighbour, accuracy_score
+from models import Classifier1NN
+
 
 
 
@@ -25,24 +28,24 @@ class ActiveLearner:
             for i in range(int(M/B)):
                 fig, ax = plt.subplots()
                 ax.axis('equal')
-                sns.scatterplot(data=self.dataset, x="x1", y="x2", hue="y", palette="Set2")
-                sns.scatterplot(data=self.dataset.iloc[self.dataset.queries[0: i*B]], x="x1", y="x2", color="black", marker="P", s=150)
-                sns.scatterplot(data=self.dataset.iloc[self.dataset.queries[i*B:(i+1)*B]], x="x1", y="x2", color="red", marker="P", s=150)
-                if (self.name=="ProbCover Sampler") or (self.name=="Spectral ProbCover Sampled"):
+                sns.scatterplot(x= self.dataset.x[:,0], y=self.dataset.x[:,1], hue=self.dataset.y, palette="Set2")
+                sns.scatterplot(x=self.dataset.x[self.dataset.queries[0: i*B],0], y=self.dataset.x[self.dataset.queries[0: i*B],1], color="black", marker="P", s=150)
+                sns.scatterplot(x=self.dataset.x[self.dataset.queries[i*B:(i+1)*B], 0], y=self.dataset.x[self.dataset.queries[i*B:(i+1)*B],1], color="red", marker="P", s=150)
+                if (self.name=="ProbCover Sampler"):
                     for u in self.dataset.queries[i*B:(i+1)*B]:
-                        ax.add_patch(plt.Circle((self.dataset.iloc[u, 0], self.dataset.iloc[u, 1]),
-                                                self.purity_radius, color='red', fill=False, alpha=0.5))
+                        ax.add_patch(plt.Circle((self.dataset.x[u, 0], self.dataset.x[u, 1]),
+                                                self.radius, color='red', fill=False, alpha=0.5))
                 plt.title(f"{self.name} with {B*(i+1)} sampled points and batch size {B}")
                 plt.show()
         if final_plot:
             fig, ax = plt.subplots()
             ax.axis('equal')
-            sns.scatterplot(data=self.dataset, x="x1", y="x2", hue="y", palette="Set2")
-            sns.scatterplot(data=self.dataset.iloc[self.dataset.queries], x="x1", y="x2", color="red", marker="P", s=150)
-            if (self.name == "ProbCover Sampler") or (self.name == "Spectral ProbCover Sampler"):
+            sns.scatterplot(x=self.dataset.x[:, 0], y=self.dataset.x[:, 1], hue=self.dataset.y, palette="Set2")
+            sns.scatterplot(x=self.dataset.x[self.dataset.queries,0], y=self.dataset.x[self.dataset.queries,1], color="red", marker="P", s=150)
+            if (self.name == "ProbCover Sampler"):
                 for u in self.dataset.queries:
-                    ax.add_patch(plt.Circle((self.dataset.iloc[u, 0], self.dataset.iloc[u, 1]),
-                                            self.purity_radius, color='red', fill=False, alpha=0.5))
+                    ax.add_patch(plt.Circle((self.dataset.x[u, 0], self.dataset.x[u, 1]),
+                                            self.radius, color='red', fill=False, alpha=0.5))
             plt.title(f"{self.name} with {M} sampled points and batch size {B}")
             plt.show()
 
@@ -58,7 +61,6 @@ class RandomSampler(ActiveLearner):
         for i in range(int(M/B)):
             idx= np.random.choice(np.where(self.dataset.labeled==0)[0], B, replace=False)
             self.dataset.observe(idx)
-
 
 class TypiclustSampler(ActiveLearner):
     def __init__(self, dataset, n_neighbours=5, model=None):
@@ -130,108 +132,60 @@ class TypiclustSampler(ActiveLearner):
         self.dataset= self.dataset.drop(columns=["cluster_id"])
 
 
-class ProbCoverSampler(ActiveLearner):
-    def __init__(self, dataset, purity_radius, purity_threshold, k, plot=[False, False], search_range=None, search_step=None,
-                 model=None):
-        super().__init__(dataset, model)
-        self.name = "ProbCover Sampler"
-
-        plot_clustering= plot[0]
-        plot_unpure_balls=plot[1]
-
-        # Get pseudo labels
-        clustering= MyKMeans(self.dataset, k)
-        clustering.fit()
-        self.pseudo_labels= clustering.pseudo_labels
-        if plot_clustering:
-            clustering.plot()
-
-        #Get the purity for given radius
-        #TODO: assert that either threshold or radius is set to None, and that search_range, search_step are initialied
-        if purity_radius is not None:
-            self.purity_radius=purity_radius
-            purity_estimate=get_purity(self.purity_radius, self.dataset.x, self.pseudo_labels, plot_unpure_balls)
-            print(f"With radius {self.purity_radius}, purity({self.purity_radius})={purity_estimate}")
-
-        if purity_threshold is not None:
-            self.purity_threshold= purity_threshold
-            #Get radius for given purity threshold
-            self.purity_radius= get_radius(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range, search_step, plot_unpure_balls)
-        print(f"ProbCover Sampler initialized with radius {self.purity_radius} for threshold {self.purity_threshold}")
-
-        #Initialize the graph
-        self.graph= adjacency_graph(self.dataset.x, self.purity_radius)
-
-    def query(self, M, B=1, n_initial=1):
-        graph=self.graph.copy()
-
-        #Initialize the labels
-        n_pool= self.dataset.n_points
-
-        # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
-        if np.sum(self.dataset.labeled)>=1:
-            covered_edges=graph[self.dataset.queries, :]
-            covered_vertices= np.where(np.max(covered_edges, axis=0)==1)[0]
-            graph[:,covered_vertices]=0
-
-        for m in range(M):
-            #get the unlabeled point with highest out-degree
-            out_degrees=np.sum(graph, axis=1)
-            max_out_degree=np.argmax(out_degrees[self.dataset.labeled==0])
-            c_id=np.arange(n_pool)[self.dataset.labeled==0][max_out_degree]
-            assert((out_degrees[c_id]==np.max(out_degrees))&(self.dataset.labeled[c_id]==0))
-
-            covered_vertices=np.where(graph[c_id, :]==1)[0]
-            graph[:,covered_vertices]=0
-
-            self.dataset.observe(c_id)
 
 
 # TODO: once all the points are covered the indices are being sampled not randomly but by increasing index order
 
-class SpectralProbCover(ActiveLearner):
-    def __init__(self, dataset, purity_radius, purity_threshold, k, gamma, plot=[False, False], search_range=None,
-                 search_step=None,
+class ProbCoverSampler(ActiveLearner):
+    def __init__(self, dataset, purity_threshold,
+                 clustering:ClusteringAlgo,
+                 plot=[False, False],
+                 search_range=[0,100], search_step=0.1,
                  model=None):
 
         super().__init__(dataset, model)
-        self.gamma= gamma
-        self.name = "Spectral ProbCover Sampler"
+        self.name = "ProbCover Sampler"
+        self.clustering= clustering
 
         plot_clustering = plot[0]
         plot_unpure_balls = plot[1]
 
         # Get pseudo labels
-        clustering= MySpectralClustering(self.dataset, k , gamma=self.gamma)
-        clustering.fit()
-        self.pseudo_labels = clustering.pseudo_labels
+        # clustering= MySpectralClustering(self.dataset, k , gamma=self.gamma)
+        self.clustering.fit_labeled()
+        self.pseudo_labels = self.clustering.pseudo_labels
         if plot_clustering:
-            clustering.plot()
+            self.clustering.plot()
 
-        # Get the purity for given radius
-        # TODO: assert that either threshold or radius is set to None, and that search_range, search_step are initialied
-        if purity_radius is not None:
-            self.purity_radius = purity_radius
-            purity_estimate = set_purity(self.purity_radius, self.dataset.x, self.pseudo_labels,
-                                                        plot_unpure_balls)
-            print(f"With radius {self.purity_radius}, purity({self.purity_radius})={purity_estimate}")
 
-        if purity_threshold is not None:
-            self.purity_threshold= purity_threshold
-            # Get radius for given purity threshold
-            self.purity_radius = get_radius(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range, search_step,
-                                                      plot_unpure_balls)
-        print(f"Spectral ProbCover Sampler initialized with radius {self.purity_radius} for threshold {self.purity_threshold}")
+        self.purity_threshold= purity_threshold
+        # Get radius for given purity threshold
+        self.radius = get_radius(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range, search_step,
+                                                  plot_unpure_balls)
+        print(f"ProbCover Sampler initialized for threshold {self.purity_threshold} with radius {self.radius}")
 
         # Initialize the graph
-        self.graph = adjacency_graph(self.dataset.x, self.purity_radius)
+        self.graph = adjacency_graph(self.dataset.x, self.radius)
+
+    def update_radius(self, new_radius):
+        self.radius= new_radius
+        self.graph= adjacency_graph(self.dataset.x, new_radius)
+        print(f"Updated ProbCover Sampler radius: {self.radius}")
+
+    def update_labeled(self, plot_clustering=False):
+        self.clustering.fit_labeled(self.dataset.queries)
+        self.pseudo_labels= self.clustering.pseudo_labels
+        self.radius = get_radius(self.purity_threshold, self.dataset.x, self.pseudo_labels, [0,10], 0.01)
+        self.graph= adjacency_graph(self.dataset.x, self.radius)
+        print(f"Updated ProbCover Sampler using the new acquired labels, new radius: {self.radius}")
+        if plot_clustering:
+            self.clustering.plot()
 
     def query(self, M, B=1, n_initial=1):
         graph = self.graph.copy()
 
         # Initialize the labels
         n_pool = self.dataset.n_points
-
 
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if np.sum(self.dataset.labeled) >= 1:
@@ -249,3 +203,70 @@ class SpectralProbCover(ActiveLearner):
             covered_vertices = np.where(graph[c_id, :] == 1)[0]
             graph[:, covered_vertices] = 0
             self.dataset.observe(c_id)
+
+
+def active_learning_algo(dataset, clustering, M, B, initial_purity_threshold, p_cover=1):
+    dataset.restart()
+    activelearner= ProbCoverSampler(dataset, initial_purity_threshold,
+                                     clustering, [True, False],
+                                     search_range=[0,10], search_step=0.01)
+
+    purity_threshold= initial_purity_threshold
+    pseudo_labels= activelearner.pseudo_labels
+    radius= activelearner.radius
+    covered= check_cover(dataset.x, dataset.queries, radius, p_cover)
+
+    model= Classifier1NN(dataset)
+
+    while len(dataset.queries)<M:
+        if ((not covered) & (len(dataset.queries)+B<=M)):
+            print("Dataset not covered yet")
+            activelearner.query(B)
+            covered= check_cover(dataset.x, dataset.queries, radius, p_cover)
+        elif covered:
+            print(f"Dataset covered with {len(dataset.queries)} queries")
+            model.update()
+            print(f"NN Classifier accuracy: {model.accuracy}")
+
+            # clustering= MySpectralClustering(dataset, k, gamma)
+            clustering.fit_labeled(dataset.queries)
+            clustering.plot()
+
+            old_labels= pseudo_labels
+            old_radius= radius
+            pseudo_labels= clustering.pseudo_labels
+            while covered:
+                changed=(accuracy_clustering(old_labels, pseudo_labels)<1)
+                if changed:
+                    radius= get_radius(purity_threshold, dataset.x, pseudo_labels, search_range=[0,10], search_step=0.01)
+                    print(f"The labels were changed with {100*accuracy_clustering(old_labels, pseudo_labels)}% overlap and the new radius is {radius}")
+                else:
+                    purity_threshold+=(1-purity_threshold)/2
+                    radius= get_radius(purity_threshold, dataset.x, pseudo_labels, search_range=[0,10], search_step=0.01)
+                    print(f"The labels were not changed so we set a higher purity threshold {purity_threshold} with radius {radius}")
+
+                if radius > old_radius:
+                    print(f"Radius is bigger, so we raise purity threshold and start the process again")
+                    purity_threshold+=(1-purity_threshold)/2
+                    radius= get_radius(purity_threshold, dataset.x, pseudo_labels, search_range=[0,10], search_step=0.01)
+                    activelearner.update_radius(radius)
+                    print(f'Changed active learners purity threshold to {purity_threshold} and radius to {radius}')
+                    if radius< old_radius:
+                        covered= check_cover(dataset.x, dataset.queries, radius, p_cover)
+                    else:
+                        print(f'Radius is still bigger or equal than previously so we know the dataset is covered')
+
+                elif radius< old_radius:
+                    covered= check_cover(dataset.x, dataset.queries, radius, p_cover)
+                    print(f"Radius is smaller")
+                    if not covered:
+                        activelearner.update_radius(radius)
+                        print(f'Changed active learners purity threshold to {purity_threshold} '
+                              f'and radius to {radius}')
+
+                elif radius==old_radius:
+                    print("Radius is the same")
+                    return radius
+
+                old_radius= radius
+                old_labels= pseudo_labels

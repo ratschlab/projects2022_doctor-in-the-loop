@@ -24,7 +24,7 @@ class ClusteringAlgo:
         if self.name=="Spectral clustering":
             plt.title(f"Spectral clustering with gamma {self.gamma} and {len(self.sampled_idx)} queries")
         else:
-            plt.title(f"Pseudo-labels from {self.name}")
+            plt.title(f"{self.name}")
         plt.show()
 
 
@@ -33,8 +33,9 @@ class MyKMeans(ClusteringAlgo):
         super(MyKMeans, self).__init__(dataset, n_clusters)
         self.name="Kmeans"
 
-    def fit(self, sampled_idx=np.array([], dtype=int)):
+    def fit_labeled(self, sampled_idx=np.array([], dtype=int)):
         self.sampled_idx=sampled_idx
+        #Does not take sampled_idx into account
         kmeans = KMeans(n_clusters=self.n_clusters).fit(self.dataset.x)
         self.pseudo_labels= kmeans.labels_
         self.centroids= kmeans.cluster_centers_
@@ -46,7 +47,7 @@ class MySpectralClustering(ClusteringAlgo):
         self.gamma=gamma
         self.name= "Spectral clustering"
 
-    def fit(self, sampled_idx=np.array([], dtype=int)):
+    def fit_labeled(self, sampled_idx=np.array([], dtype=int)):
         self.sampled_idx= sampled_idx
         spectralclustering = SpectralClustering(n_clusters=self.n_clusters, n_init=10, gamma=self.gamma, affinity='rbf',
                                                 assign_labels='kmeans').fit(self.dataset.x)

@@ -139,7 +139,7 @@ def check_P_cover(x, labeled_idx, radius: float, P=None):
     max_length= np.max(shortest_path)
     return max_length<=P
 
-def check_cover(x, labeled_idx, radius: float, p_cover:float):
+def cover(x, labeled_idx, radius:float):
     n_vertices = len(x)
     unlabeled_idx = np.array(list(set(np.arange(n_vertices)) - set(labeled_idx)))
     adjacency = adjacency_graph(x, radius)
@@ -148,6 +148,10 @@ def check_cover(x, labeled_idx, radius: float, p_cover:float):
         covered_points=0
     else:
         covered_points= np.sum(np.max(covered, axis=1))/(len(unlabeled_idx))
+    return covered_points
+
+def check_cover(x, labeled_idx, radius: float, p_cover:float):
+    covered_points= cover(x, labeled_idx, radius)
     return covered_points>=p_cover
 
 

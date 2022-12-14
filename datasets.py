@@ -4,6 +4,7 @@ from IPython import embed
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
 
 class ActiveDataset:
     def __init__(self, n_points):
@@ -54,7 +55,7 @@ class PointClouds(ActiveDataset):
         self.cluster_std= cluster_std
         self.cluster_samples= cluster_samples.astype(int)
         super(PointClouds, self).__init__(n_points= np.sum(cluster_samples))
-
+        self.name= "Clouds"
 
     def generate_data(self):
         x, y = make_blobs(n_samples=self.cluster_samples, cluster_std=self.cluster_std,
@@ -73,7 +74,7 @@ class CenteredCircles(ActiveDataset):
         self.samples = samples
         self.std = std
         super(CenteredCircles, self).__init__(n_points= np.sum(samples))
-
+        self.name= "Centered circles"
 
     def generate_data(self):
         x1, x2, y= np.array([]), np.array([]), np.array([])
@@ -84,5 +85,44 @@ class CenteredCircles(ActiveDataset):
             y= np.append(y, np.ones(self.samples[k])*k)
         x= np.concatenate((x1,x2), axis=1)
         return x,y
+
+class MixedClusters(ActiveDataset):
+    def __init__(self, cluster_centers, cluster_std, cluster_samples):
+        self.n_features= len(cluster_centers[0])
+        self.n_cluster= len(cluster_std)
+        self.cluster_centers= cluster_centers
+        self.cluster_std= cluster_std
+        self.cluster_samples= cluster_samples.astype(int)
+        super(MixedClusters, self).__init__(n_points= np.sum(cluster_samples))
+        self.name= "Mixed clouds"
+
+    def generate_data(self):
+        x, y = make_blobs(n_samples=self.cluster_samples, cluster_std=self.cluster_std,
+                          centers=self.cluster_centers, n_features=self.n_features)
+        labels= np.zeros(len(y))
+
+        classes= np.unique(y)
+        for c in classes:
+            idx= np.where(y==c)[0]
+            clustering= KMeans(n_clusters=2).fit(x[idx,:])
+            labels[idx]= clustering.labels_
+        return x, labels
+
+
+class CIFAR10_simclr(ActiveDataset):
+    def __init__(self, n_epochs):
+        self.path= "../cifar10features_simclr/"
+        self.n_epochs= n_epochs
+        self.x, self.y= self.generate_data()
+        self.n_points= len(self.y)
+        self.labeled = np.zeros(self.n_points, dtype=int)
+        self.queries = list()
+
+    def generate_data(self):
+        y= np.load(self.path + "cifar10_labels.npy")
+        x= np.load(self.path + f"features_{self.n_epochs}epochs.npy")
+        return x, y.squeeze()
+
+
 
 

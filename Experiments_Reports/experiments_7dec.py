@@ -1,6 +1,6 @@
 import numpy as np
 from datasets import CenteredCircles, PointClouds, ActiveDataset
-from activelearners import ProbCoverSampler, SpectralProbCover
+from activelearners import ProbCoverSampler
 from clustering import MySpectralClustering, MyKMeans, ClusteringAlgo
 from IPython import embed
 import seaborn as sns
@@ -11,12 +11,11 @@ from helper import accuracy_clustering, check_cover, get_purity, get_radius, get
 ## Initialize the circles dataset
 center=[4,5]
 radiuses=[0.5, 3, 5]
-samples= [30, 50 ,100]
-std=[0.1, 0.15, 0.3]
+samples= [30, 100 ,150]
+std=[0.45, 0.4, 0.4]
 
 circles_data=CenteredCircles(center, radiuses, samples, std)
 circles_data.plot_dataset()
-circles_data.plot_al()
 
 ## Initialize the point clouds dataset
 m = 400
@@ -33,68 +32,68 @@ clouds_data= PointClouds(cluster_centers, cluster_std, cluster_samples)
 
 def active_learning_algo(dataset, M, B, k, gamma, initial_purity_threshold, p_cover=1):
     dataset.restart()
-    activelearner= SpectralProbCover(dataset=circles_data, purity_radius=None, purity_threshold=initial_purity_threshold, k=3, gamma=gamma,
-                                     plot=[True, True],
+    clustering= MySpectralClustering(dataset, k, gamma)
+    activelearner= ProbCoverSampler(dataset, initial_purity_threshold,
+                                     clustering, [True, False],
                                      search_range=[0,10], search_step=0.01)
 
     purity_threshold= initial_purity_threshold
-    nn_idx= get_nearest_neighbour(dataset.x)
-
-    #Clustering pseudo-labels
-    clustering= MySpectralClustering(dataset, k, gamma)
-    clustering.fit()
-    clustering.plot()
-    pseudo_labels= clustering.pseudo_labels
-
-    #Purity radius
-    purity_radius= get_radius(purity_threshold, dataset.x, pseudo_labels, search_range=[0,10], search_step=0.01)
-    covered= check_cover(dataset.x, dataset.queries, purity_radius, p_cover)
+    pseudo_labels= activelearner.pseudo_labels
+    radius= activelearner.radius
+    covered= check_cover(dataset.x, dataset.queries, radius, p_cover)
 
     while len(dataset.queries)<M:
         if ((not covered) & (len(dataset.queries)+B<=M)):
             print("Dataset not covered yet")
             activelearner.query(B)
-            covered= check_cover(dataset.x, dataset.queries, purity_radius, p_cover)
+            covered= check_cover(dataset.x, dataset.queries, radius, p_cover)
         elif covered:
             print(f"Dataset covered with {len(dataset.queries)} queries")
+
             clustering= MySpectralClustering(dataset, k, gamma)
             clustering.fit(dataset.queries)
             clustering.plot()
+
             old_labels= pseudo_labels
-            old_radius= purity_radius
+            old_radius= radius
             pseudo_labels= clustering.pseudo_labels
             while covered:
-                old_radius = purity_radius
-
                 changed=(accuracy_clustering(old_labels, pseudo_labels)<1)
                 if changed:
-                    purity_radius= get_radius(purity_threshold, dataset.x, pseudo_labels, search_range=[0,10], search_step=0.01)
-                    print(f"The labels were changed with {100*accuracy_clustering(old_labels, pseudo_labels)}% overlap and the new radius is {purity_radius}")
+                    radius= get_radius(purity_threshold, dataset.x, pseudo_labels, search_range=[0,10], search_step=0.01)
+                    print(f"The labels were changed with {100*accuracy_clustering(old_labels, pseudo_labels)}% overlap and the new radius is {radius}")
                 else:
                     purity_threshold+=(1-purity_threshold)/2
-                    purity_radius= get_radius(purity_threshold, dataset.x, pseudo_labels, search_range=[0,10], search_step=0.01)
-                    print(f"The labels were not changed so we set a higher purity threshold {purity_threshold} with radius {purity_radius}")
+                    radius= get_radius(purity_threshold, dataset.x, pseudo_labels, search_range=[0,10], search_step=0.01)
+                    print(f"The labels were not changed so we set a higher purity threshold {purity_threshold} with radius {radius}")
 
-                if purity_radius> old_radius:
+                if radius> old_radius:
                     print(f"Radius is bigger, so we raise purity threshold and start the process again")
                     purity_threshold+=(1-purity_threshold)/2
-                    purity_radius= get_radius(purity_threshold, dataset.x, pseudo_labels, search_range=[0,10], search_step=0.01)
-                    activelearner.purity_radius= purity_radius
-                    print(f'Changed active learners purity threshold to {purity_threshold} and radius to {purity_radius}')
-                    covered= check_cover(dataset.x, dataset.queries, purity_radius, p_cover)
+                    radius= get_radius(purity_threshold, dataset.x, pseudo_labels, search_range=[0,10], search_step=0.01)
+                    activelearner.update_radius(radius)
+                    print(f'Changed active learners purity threshold to {purity_threshold} and radius to {radius}')
+                    if radius< old_radius:
+                        covered= check_cover(dataset.x, dataset.queries, radius, p_cover)
+                    else:
+                        print(f'Radius is still bigger or equal than previously so we know the dataset is covered')
 
-                elif purity_radius< old_radius:
-                    covered= check_cover(dataset.x, dataset.queries, purity_radius, p_cover)
+                elif radius< old_radius:
+                    covered= check_cover(dataset.x, dataset.queries, radius, p_cover)
                     print(f"Radius is smaller")
                     if not covered:
-                        activelearner.purity_radius= purity_radius
+                        activelearner.update_radius(radius)
                         print(f'Changed active learners purity threshold to {purity_threshold} '
-                              f'and radius to {purity_radius}')
+                              f'and radius to {radius}')
 
-                elif purity_radius==old_radius:
+                elif radius==old_radius:
                     print("Radius is the same")
-                    return purity_radius
+                    return radius
+
+                old_radius= radius
+                old_labels= pseudo_labels
 
 
+active_learning_algo(circles_data, 150, 5, 3, 1, 0.9, 1)
 
-active_learning_algo(circles_data, 40, 5, 3, 1, 0.9, 1)
+embed()
