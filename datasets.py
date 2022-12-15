@@ -7,11 +7,19 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 
 class ActiveDataset:
-    def __init__(self, n_points):
+    def __init__(self, n_points, random_state= None):
         self.n_points= n_points
+
+        if random_state is not None:
+            state = np.random.get_state()
+            np.random.seed(random_state)
         self.x, self.y= self.generate_data()
+        if random_state is not None:
+            np.random.set_state(state)
+
         self.labeled = np.zeros(self.n_points, dtype=int)
         self.queries = list()
+
 
     def restart(self):
         self.labeled = np.zeros(self.n_points, dtype=int)
@@ -48,13 +56,13 @@ class ActiveDataset:
 
 
 class PointClouds(ActiveDataset):
-    def __init__(self, cluster_centers, cluster_std, cluster_samples):
+    def __init__(self, cluster_centers, cluster_std, cluster_samples, random_state=None):
         self.n_features= len(cluster_centers[0])
         self.n_cluster= len(cluster_std)
         self.cluster_centers= cluster_centers
         self.cluster_std= cluster_std
         self.cluster_samples= cluster_samples.astype(int)
-        super(PointClouds, self).__init__(n_points= np.sum(cluster_samples))
+        super(PointClouds, self).__init__(np.sum(cluster_samples), random_state)
         self.name= "Clouds"
 
     def generate_data(self):
@@ -63,9 +71,8 @@ class PointClouds(ActiveDataset):
         return x, y
 
 
-
 class CenteredCircles(ActiveDataset):
-    def __init__(self, center, radiuses, samples, std):
+    def __init__(self, center, radiuses, samples, std, random_state=None):
         assert (len(radiuses) == len(samples))
         self.n_features = 2
         self.n_cluster = len(radiuses)
@@ -73,7 +80,7 @@ class CenteredCircles(ActiveDataset):
         self.radiuses = radiuses
         self.samples = samples
         self.std = std
-        super(CenteredCircles, self).__init__(n_points= np.sum(samples))
+        super(CenteredCircles, self).__init__(np.sum(samples), random_state)
         self.name= "Centered circles"
 
     def generate_data(self):
@@ -87,13 +94,13 @@ class CenteredCircles(ActiveDataset):
         return x,y
 
 class MixedClusters(ActiveDataset):
-    def __init__(self, cluster_centers, cluster_std, cluster_samples):
+    def __init__(self, cluster_centers, cluster_std, cluster_samples, random_state=None):
         self.n_features= len(cluster_centers[0])
         self.n_cluster= len(cluster_std)
         self.cluster_centers= cluster_centers
         self.cluster_std= cluster_std
         self.cluster_samples= cluster_samples.astype(int)
-        super(MixedClusters, self).__init__(n_points= np.sum(cluster_samples))
+        super(MixedClusters, self).__init__(np.sum(cluster_samples), random_state)
         self.name= "Mixed clouds"
 
     def generate_data(self):
@@ -110,13 +117,11 @@ class MixedClusters(ActiveDataset):
 
 
 class CIFAR10_simclr(ActiveDataset):
-    def __init__(self, n_epochs):
+    def __init__(self, n_epochs, random_state=None):
         self.path= "../cifar10features_simclr/"
         self.n_epochs= n_epochs
-        self.x, self.y= self.generate_data()
-        self.n_points= len(self.y)
-        self.labeled = np.zeros(self.n_points, dtype=int)
-        self.queries = list()
+        super(CIFAR10_simclr, self).__init__(10000, random_state)
+
 
     def generate_data(self):
         y= np.load(self.path + "cifar10_labels.npy")
@@ -124,5 +129,30 @@ class CIFAR10_simclr(ActiveDataset):
         return x, y.squeeze()
 
 
+
+class TwoMoons(ActiveDataset):
+    def __init__(self, ellipse_centers, ellipse_radius, std, samples, random_state=None):
+        assert(len(samples)==2)
+        self.n_features= len(ellipse_centers[0])
+        self.centers= ellipse_centers
+        self.radiuses= ellipse_radius
+        self.std= std
+        self.samples= np.array(samples).astype(int)
+        super(TwoMoons, self).__init__(np.sum(samples), random_state)
+        self.name= "Moons"
+
+    def generate_data(self):
+        a1, b1= self.radiuses[0]
+        a2, b2= self.radiuses[1]
+        #x1, x2, y = np.array([]), np.array([]), np.array([])
+        top_theta= np.linspace(0,np.pi, self.samples[0])
+        bottom_theta= np.linspace(np.pi, 2*np.pi, self.samples[1])
+        x1= np.append(a1*np.cos(top_theta)+ self.centers[0][0]+ self.std[0]*np.random.normal(loc=0.0, scale=1.0, size=self.samples[0]),
+                      a2*np.cos(bottom_theta)+ self.centers[1][0]+ self.std[1]*np.random.normal(loc=0.0, scale=1.0, size=self.samples[1])).reshape(-1,1)
+        x2= np.append(b1*np.sin(top_theta)+ self.centers[0][1]+ self.std[0]*np.random.normal(loc=0.0, scale=1.0, size=self.samples[0]),
+                      b2*np.sin(bottom_theta)+ self.centers[1][1]+ self.std[1]*np.random.normal(loc=0.0, scale=1.0, size=self.samples[1])).reshape(-1,1)
+        y= np.append(np.zeros(self.samples[0]), np.ones(self.samples[1]))
+        x = np.concatenate((x1, x2), axis=1)
+        return x, y
 
 
