@@ -86,8 +86,8 @@ def check_prob_cover_faiss():
     #Check that the usual method and faiss implementation correspond
     print(np.all(old_out_degrees_faiss == old_out_degrees))
     print(np.all(out_degrees_faiss== out_degrees))
-    print(np.sum(old_out_degrees_faiss - out_degrees_faiss) == len(covered_idx_faiss))
-    print(np.sum(old_out_degrees- out_degrees) == len(covered_idx_faiss))
+    # print(np.sum(old_out_degrees_faiss - out_degrees_faiss) == len(covered_idx_faiss))
+    # print(np.sum(old_out_degrees- out_degrees) == len(covered_idx_faiss))
 
 
 check_nn_faiss()
