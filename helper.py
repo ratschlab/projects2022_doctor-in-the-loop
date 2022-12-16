@@ -9,6 +9,7 @@ from sympy.utilities.iterables import multiset_permutations
 import scipy
 from sklearn.metrics import accuracy_score
 from scipy.sparse.csgraph import shortest_path
+import faiss
 
 def typicality(X, K):
     """
@@ -24,20 +25,27 @@ def typicality(X, K):
     return t.reshape(-1, 1)
 
 
-def adjacency_graph(x: np.array, delta: float):
+def adjacency_graph(x: np.array, radius: float):
     n_vertices = len(x)
     graph = np.zeros(shape=(n_vertices, n_vertices))
     for u in range(n_vertices):
         graph[u,u]=1
         for v in range(u):
-            if np.linalg.norm(x[u,:]-x[v,:]) < delta:
+            if np.linalg.norm(x[u,:]-x[v,:]) < radius:
                 graph[u, v] = 1
                 graph[v, u] = 1
 
     return graph
 
+def adjacency_graph_faiss(x: np.array, radius:float):
+    n_features= x.shape[1]
+    index = faiss.IndexFlatL2(n_features)  # build the index
+    index.add(x.astype('float32'))
+    lims, D, I = index.range_search(x.astype('float32'), radius**2) # because faiss uses squared L2 error
+    return lims, D, I
+
 def weighted_graph(dataset: pd.DataFrame, kernel_fn, kernel_hyperparam, sampled_labels=None):
-    n_vertices = len(x)
+    n_vertices = len(dataset.x)
     graph = np.zeros(shape=(n_vertices, n_vertices))
     for u in range(n_vertices):
         for v in range(u):
@@ -63,6 +71,15 @@ def get_nearest_neighbour(x: np.array):
     _, idx = knn.kneighbors(x)
     idx = idx[:, 1]  # contains the nearest neighbour for each point
     return idx
+
+def get_nn_faiss(x: np.array):
+    n_features = x.shape[1]
+    index = faiss.IndexFlatL2(n_features)  # build the index
+    index.add(x.astype('float32'))
+    D, I = index.search(x.astype('float32'), 2)
+    idx= I[:,1]
+    return idx
+
 
 def get_purity(x, pseudo_labels, nn_idx, delta, plot_unpure_balls=False):
     """
@@ -91,6 +108,38 @@ def get_purity(x, pseudo_labels, nn_idx, delta, plot_unpure_balls=False):
                 plt.plot(x[u, 0], x[u, 1], color="red", marker="P")
                 ax.add_patch(plt.Circle((x[u, 0], x[u, 1]), delta, color='red', fill=False, alpha=0.5))
         plt.title(f"Points that are not pure and their covering balls of radius {delta}")
+        plt.show()
+
+    return np.mean(purity)
+
+def get_purity_faiss(x, pseudo_labels, nn_idx, radius, plot_unpure_balls=False):
+    """
+    Args:
+        x: np.array
+        pseudo_labels: labels predicted by some clustering algorithm
+        nn_idx: id of the nearest neighbour of each point
+        radius: purity radius
+
+    Returns:
+        purity(radius)
+    """
+    purity = np.zeros(len(x), dtype=int)
+    lims, D, I = adjacency_graph_faiss(x, radius)
+
+    for u in range(len(x)):
+        #covered_vertices = np.where(graph[u, :] == 1)[0]
+        covered_vertices= I[lims[u]:lims[u+1]]
+        purity[u] = int(np.all(pseudo_labels[nn_idx[covered_vertices]] == pseudo_labels[nn_idx[u]]))
+
+    if plot_unpure_balls:
+        fig, ax = plt.subplots()
+        ax.axis('equal')
+        sns.scatterplot(x=x[:,0], y=x[:,1], hue=pseudo_labels, palette="Set2")
+        for u in range(len(x)):
+            if purity[u] == 0:
+                plt.plot(x[u, 0], x[u, 1], color="red", marker="P")
+                ax.add_patch(plt.Circle((x[u, 0], x[u, 1]), radius, color='red', fill=False, alpha=0.5))
+        plt.title(f"Points that are not pure and their covering balls of radius {radius}")
         plt.show()
 
     return np.mean(purity)
@@ -126,6 +175,38 @@ def get_radius(alpha: float, x: np.array, pseudo_labels,
 
     if plot_unpure_balls:
         get_purity(x, pseudo_labels, nn_idx, purity_radius, True)
+
+    return purity_radius
+
+def get_radius_faiss(alpha: float, x: np.array, pseudo_labels,
+                         search_range=[0.5, 3.5], search_step=0.05, plot_unpure_balls=False):
+    """
+    Args:
+        alpha: purity threshold
+        x: np.array
+        k: number of classes in the data
+        graph: adjacency matrix with 0 diagonals, an edge for points in the B-delta ball
+    Returns:
+        purity_radius: min{r: purity(r)>=alpha}
+    """
+
+    # Get the indices of the 1 nearest neighbours for each point
+    nn_idx = get_nn_faiss(x)
+    # Radiuses for the search
+    radiuses = np.arange(search_range[0], search_range[1], search_step)
+
+    while len(radiuses)>1:
+        id = int(len(radiuses) / 2)
+        purity= get_purity_faiss(x, pseudo_labels, nn_idx, radiuses[id])
+
+        if purity>=alpha:
+            radiuses=radiuses[id:]
+        else:
+            radiuses=radiuses[:id]
+    purity_radius = radiuses[0]
+
+    if plot_unpure_balls:
+        get_purity_faiss(x, pseudo_labels, nn_idx, purity_radius, True)
 
     return purity_radius
 
