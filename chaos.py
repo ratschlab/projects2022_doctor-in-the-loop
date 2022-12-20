@@ -128,3 +128,102 @@ def degree_matrix(graph_adjacency):
     for i in range(n_vertices):
         D[i,i]= np.sum(graph_adjacency[i, :])
     return D
+
+
+# ========================Initializing all the datasets =======================
+
+n_train= 800
+n_test= 200
+
+## Point clouds dataset
+#Baseline
+cluster_centers = [(-5, -5), (-3, 1), (5, -2), (5, 4)]
+cluster_std = [0.3, 0.8, 0.5, 0.7]
+p=np.array([0.25, 0.25, 0.25, 0.25])
+clouds= PointClouds(cluster_centers, cluster_std, (p*n_train).astype(int), random_state=1)
+# clouds.plot_dataset()
+
+#Unbalanced
+cluster_centers = [(-5, -5), (-3, 1), (5, -2), (5, 4)]
+cluster_std = [0.3, 0.8, 0.5, 0.7]
+p= np.array([0.8, 0.05, 0.05, 0.1])
+clouds= PointClouds(cluster_centers, cluster_std, (p*n_train).astype(int), random_state=1)
+# clouds.plot_dataset()
+
+# Smaller margins
+cluster_centers = [(-4, -4), (-1, 1), (5, -2), (5, 4)]
+cluster_std = [1, 1.1, 1, 1.1]
+p=np.array([0.25, 0.25, 0.25, 0.25])
+clouds= PointClouds(cluster_centers, cluster_std, (p*n_train).astype(int), random_state=1)
+# clouds.plot_dataset()
+
+clouds_test= PointClouds(cluster_centers, cluster_std, (p*n_test).astype(int), random_state=2)
+
+## Circles dataset
+# Baseline
+center=[4,5]
+radiuses=[0.5, 3.5, 6]
+std=[0.4, 0.3, 0.4]
+p = np.array([0.3, 0.35, 0.35])
+circles=CenteredCircles(center, radiuses, (p*n_train).astype(int), std, random_state=1)
+# circles.plot_dataset()
+
+#unbalanced
+center=[4,5]
+radiuses=[0.5, 3.5, 6]
+std=[0.4, 0.3, 0.4]
+p = np.array([0.05, 0.9, 0.05])
+circles=CenteredCircles(center, radiuses, (p*n_train).astype(int), std, random_state=1)
+# circles.plot_dataset()
+
+#smaller margins
+center=[4,5]
+radiuses=[0.5, 3.5, 6]
+std=[0.6, 0.5, 0.55]
+p = np.array([0.3, 0.35, 0.35])
+circles=CenteredCircles(center, radiuses, (p*n_train).astype(int), std, random_state=1)
+# circles.plot_dataset()
+
+circles_test=CenteredCircles(center, radiuses, (p*n_test).astype(int), std, random_state=2)
+
+## Two moons dataset
+#Baseline
+ellipse_centers = [(0,-1), (3,0)]
+ellipse_radius=[(3,3),(2.5,4)]
+cluster_std = [0.2, 0.2]
+p= np.array([0.5, 0.5])
+moons= TwoMoons(ellipse_centers, ellipse_radius, cluster_std, (p*n_train).astype(int), random_state=1)
+moons.plot_dataset()
+
+#Unbalanced
+ellipse_centers = [(0,-1), (3,0)]
+ellipse_radius=[(3,3),(2.5,4)]
+cluster_std = [0.2, 0.2]
+p= np.array([0.85, 0.15])
+moons= TwoMoons(ellipse_centers, ellipse_radius, cluster_std, (p*n_train).astype(int), random_state=1)
+moons.plot_dataset()
+
+#smaller margins
+ellipse_centers = [(0,-2), (3,0)]
+ellipse_radius=[(3,4),(2.5,4)]
+cluster_std = [0.45, 0.45]
+p= np.array([0.5, 0.5])
+moons= TwoMoons(ellipse_centers, ellipse_radius, cluster_std, (p*n_train).astype(int), random_state=1)
+moons.plot_dataset()
+
+moons_test= TwoMoons(ellipse_centers, ellipse_radius, cluster_std, (p*n_test).astype(int), random_state=2)
+
+## Mixed clusters dataset
+cluster_centers = [(0, -5), (-6, 0), (5, 4)]
+cluster_std = [0.5, 0.8, 1.2]
+p=np.array([0.3, 0.4, 0.3])
+
+mixed= MixedClusters(cluster_centers, cluster_std, (p*n_train).astype(int), random_state=1)
+mixed_test= MixedClusters(cluster_centers, cluster_std, (p*n_test).astype(int), random_state=2)
+
+##CIFAR10 dataset
+cifar10_100epochs= CIFAR10_simclr(n_epochs=100)
+cifar10_200epochs= CIFAR10_simclr(n_epochs=200)
+cifar10_400epochs= CIFAR10_simclr(n_epochs=400)
+cifar10_800epochs= CIFAR10_simclr(n_epochs=800)
+cifar10_1000epochs= CIFAR10_simclr(n_epochs=1000)

@@ -4,8 +4,9 @@ from IPython import embed
 from datasets import PointClouds, CenteredCircles
 from helper import adjacency_graph, get_radius, get_purity, get_nearest_neighbour
 from helper import adjacency_graph_faiss, get_radius_faiss, get_purity_faiss, get_nn_faiss
-
-
+from helper import accuracy_clustering
+from activelearners import ProbCoverSampler, ProbCoverSampler_Faiss
+from clustering import MyKMeans, MySpectralClustering, OracleClassifier
 M = 150
 B = 5
 threshold = 0.9
@@ -55,22 +56,30 @@ def check_adjacency_faiss():
     print(same)
 
 def check_prob_cover_faiss():
+    circles_data.restart()
+    x= circles_data.x
+    radius= 0.5
     lims, D, I= adjacency_graph_faiss(x, radius)
-    out_degrees_faiss = (lims[1:]-lims[:-1])
-    max_out_degree_id= np.argmax(out_degrees_faiss[circles_data.labeled==0])
-    c_id_faiss = np.arange(circles_data.n_points)[circles_data.labeled == 0][max_out_degree_id]
 
-    covered_vertices_faiss= I[lims[c_id_faiss]:lims[c_id_faiss+1]]
-    covered_idx_faiss= np.sort(np.where(np.isin(I, covered_vertices_faiss))[0])
-    old_lims, old_I, old_covered_idx_faiss, old_out_degrees_faiss= lims.copy(), I.copy(), covered_idx_faiss.copy(), out_degrees_faiss.copy()
+    for i in range(5):
+        print(i, lims.shape, I.shape)
+        out_degrees_faiss = (lims[1:]-lims[:-1])
+        max_out_degree_id= np.argmax(out_degrees_faiss[circles_data.labeled==0])
+        c_id_faiss = np.arange(circles_data.n_points)[circles_data.labeled == 0][max_out_degree_id]
+        print(c_id_faiss, np.max(out_degrees_faiss))
 
-    n_covered= np.zeros(len(lims))
-    for l in range(1, len(lims)):
-        n_covered[l]= np.sum(((lims[l-1]<=old_covered_idx_faiss)&(old_covered_idx_faiss<lims[l])))
-    lims= old_lims-np.cumsum(n_covered)
-    I = np.delete(I, old_covered_idx_faiss)
-    out_degrees_faiss= (lims[1:]-lims[:-1])
-    print("Sampling for faiss done")
+        covered_vertices_faiss= I[lims[c_id_faiss]:lims[c_id_faiss+1]]
+        covered_idx_faiss= np.sort(np.where(np.isin(I, covered_vertices_faiss))[0])
+        print("Covered idx:", covered_idx_faiss.shape)
+
+        n_covered= np.zeros(len(lims))
+        for l in range(1, len(lims)):
+            n_covered[l]= np.sum(((lims[l-1]<=covered_idx_faiss)&(covered_idx_faiss<lims[l])))
+        lims= lims-np.cumsum(n_covered)
+        lims= lims.astype(int)
+        I = np.delete(I, covered_idx_faiss)
+        print(f"Iteration {i} done")
+        print("*")
 
 
     # Use the usual method to compare
@@ -80,17 +89,53 @@ def check_prob_cover_faiss():
     c_id = np.arange(circles_data.n_points)[circles_data.labeled == 0][max_out_degree]
     covered_vertices = np.where(G[c_id, :] == 1)[0]
     G[:, covered_vertices] = 0
-    old_out_degrees= out_degrees
-    out_degrees= np.sum(G, axis=1)
-
-    #Check that the usual method and faiss implementation correspond
-    print(np.all(old_out_degrees_faiss == old_out_degrees))
-    print(np.all(out_degrees_faiss== out_degrees))
-    # print(np.sum(old_out_degrees_faiss - out_degrees_faiss) == len(covered_idx_faiss))
-    # print(np.sum(old_out_degrees- out_degrees) == len(covered_idx_faiss))
 
 
-check_nn_faiss()
-check_prob_cover_faiss()
+def check_probcover_kmeans():
+    clustering_seed= np.random.randint(1000)
+    circles_data.restart()
+    clustering= MyKMeans(circles_data, 3, random_clustering=clustering_seed)
+    learner= ProbCoverSampler(circles_data, 0.9,
+                                         clustering, [True, False],
+                                         search_range=[0, 10], search_step=0.01)
+    learner.query(5)
+    learner.query(5)
+    print(circles_data.queries)
+
+    circles_data.restart()
+    clustering= MyKMeans(circles_data, 3, random_clustering=clustering_seed)
+    learner_faiss= ProbCoverSampler_Faiss(circles_data, 0.9,
+                                         clustering, [True, False],
+                                         search_range=[0, 10], search_step=0.01)
+    learner_faiss.query(5)
+    learner_faiss.query(5)
+    print(circles_data.queries)
+
+    print(accuracy_clustering(learner.pseudo_labels, learner_faiss.pseudo_labels))
+
+def check_probcover_spectral():
+    clustering_seed= np.random.randint(1000)
+
+    circles_data.restart()
+    clustering= MySpectralClustering(circles_data, 3, gamma= 3, random_clustering=clustering_seed)
+    learner_faiss= ProbCoverSampler_Faiss(circles_data, 0.9,
+                                         clustering, [True, False],
+                                         search_range=[0, 10], search_step=0.01)
+    learner_faiss.query(5)
+    learner_faiss.query(5)
+    print(circles_data.queries)
+
+
+    circles_data.restart()
+    clustering= MySpectralClustering(circles_data, 3, gamma= 3, random_clustering=clustering_seed)
+    learner= ProbCoverSampler(circles_data, 0.9,
+                                         clustering, [True, False],
+                                         search_range=[0, 10], search_step=0.01)
+    learner.query(5)
+    learner.query(5)
+    print(circles_data.queries)
+
+    print(accuracy_clustering(learner.pseudo_labels, learner_faiss.pseudo_labels))
+
 embed()
 

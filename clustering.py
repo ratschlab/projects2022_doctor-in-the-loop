@@ -10,9 +10,11 @@ from helper import weighted_graph
 
 
 class ClusteringAlgo:
-    def __init__(self, dataset, n_clusters):
+    def __init__(self, dataset, n_clusters, random_clustering=None):
         self.n_clusters=n_clusters
         self.dataset= dataset
+        self.random_clustering= random_clustering
+
 
     def plot(self):
         fig, ax = plt.subplots()
@@ -27,30 +29,40 @@ class ClusteringAlgo:
             plt.title(f"{self.name}")
         plt.show()
 
+class OracleClassifier(ClusteringAlgo):
+    def __init__(self, dataset, n_clusters, random_clustering=None):
+        super(OracleClassifier, self).__init__(dataset, n_clusters, random_clustering)
+        self.name="Ground truth classifier"
+
+    def fit_labeled(self, sampled_idx=np.array([], dtype=int)):
+        self.sampled_idx=sampled_idx
+        #Does not take sampled_idx into account
+        self.pseudo_labels= self.dataset.y
+
 
 class MyKMeans(ClusteringAlgo):
-    def __init__(self, dataset, n_clusters):
-        super(MyKMeans, self).__init__(dataset, n_clusters)
+    def __init__(self, dataset, n_clusters, random_clustering=None):
+        super(MyKMeans, self).__init__(dataset, n_clusters, random_clustering)
         self.name="Kmeans"
 
     def fit_labeled(self, sampled_idx=np.array([], dtype=int)):
         self.sampled_idx=sampled_idx
         #Does not take sampled_idx into account
-        kmeans = KMeans(n_clusters=self.n_clusters).fit(self.dataset.x)
+        kmeans = KMeans(n_clusters=self.n_clusters, random_state= self.random_clustering).fit(self.dataset.x)
         self.pseudo_labels= kmeans.labels_
         self.centroids= kmeans.cluster_centers_
 
 
 class MySpectralClustering(ClusteringAlgo):
-    def __init__(self, dataset, n_clusters, gamma):
-        super(MySpectralClustering, self).__init__(dataset, n_clusters)
+    def __init__(self, dataset, n_clusters, gamma, random_clustering=None):
+        super(MySpectralClustering, self).__init__(dataset, n_clusters, random_clustering)
         self.gamma=gamma
         self.name= "Spectral clustering"
 
     def fit_labeled(self, sampled_idx=np.array([], dtype=int)):
         self.sampled_idx= sampled_idx
         spectralclustering = SpectralClustering(n_clusters=self.n_clusters, n_init=10, gamma=self.gamma, affinity='rbf',
-                                                assign_labels='kmeans').fit(self.dataset.x)
+                                                assign_labels='kmeans', random_state=self.random_clustering).fit(self.dataset.x)
         if len(self.sampled_idx)==0:
             self.pseudo_labels= spectralclustering.labels_
         elif len(self.sampled_idx)>0:
@@ -66,7 +78,7 @@ class MySpectralClustering(ClusteringAlgo):
                         affinity_matrix[v, u] = 0
 
             spectralclustering = SpectralClustering(n_clusters=self.n_clusters, n_init=10, affinity='precomputed',
-                                                    assign_labels='kmeans').fit(affinity_matrix)
+                                                    assign_labels='kmeans', random_state=self.random_clustering).fit(affinity_matrix)
             self.pseudo_labels = spectralclustering.labels_
 
 

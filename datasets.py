@@ -9,12 +9,13 @@ from sklearn.cluster import KMeans
 class ActiveDataset:
     def __init__(self, n_points, random_state= None):
         self.n_points= n_points
+        self.random_state= random_state
 
-        if random_state is not None:
+        if self.random_state is not None:
             state = np.random.get_state()
-            np.random.seed(random_state)
+            np.random.seed(self.random_state)
         self.x, self.y= self.generate_data()
-        if random_state is not None:
+        if self.random_state is not None:
             np.random.set_state(state)
 
         self.labeled = np.zeros(self.n_points, dtype=int)
@@ -52,6 +53,7 @@ class ActiveDataset:
         sns.scatterplot(x=self.x[:, 0], y=self.x[:, 1], hue=self.y, palette="Set2")
         sns.scatterplot(x=self.x[self.queries, 0], y=self.x[self.queries, 1], color= "red", marker="P", s=150)
         plt.show()
+
 
 
 
@@ -118,27 +120,43 @@ class MixedClusters(ActiveDataset):
 
 class CIFAR10_simclr(ActiveDataset):
     def __init__(self, n_epochs, random_state=None):
-        self.path= "../cifar10features_simclr/"
+        #TODO Change path so that it works in general
+        self.path= "/Users/victoriabarenne/projects2022_doctor-in-the-loop/cifar10features_simclr/"
         self.n_epochs= n_epochs
         super(CIFAR10_simclr, self).__init__(10000, random_state)
 
 
     def generate_data(self):
-        y= np.load(self.path + "cifar10_labels.npy")
         x= np.load(self.path + f"features_{self.n_epochs}epochs.npy")
+        y= np.load(self.path + "cifar10_labels.npy")
+
         return x, y.squeeze()
+
+
+    def split(self, train_idx, test_idx):
+        #create a copy
+        train, test= type(self)(self.n_epochs, self.random_state), type(self)(self.n_epochs, self.random_state)
+        train.x, train.y, train.labeled= self.x[train_idx], self.y[train_idx], self.labeled[train_idx]
+        test.x, test.y, test.labeled= self.x[test_idx], self.y[test_idx], self.labeled[test_idx]
+        train.n_points, test.n_points= len(train_idx), len(test_idx)
+        query_in_train= np.isin(self.queries, train_idx)
+        query_in_test= np.isin(self.queries, test_idx)
+        assert(np.all(query_in_train.astype(int)+query_in_test.astype(int)==1))
+        train.queries= list(np.array(self.queries)[query_in_train])
+        test.queries= list(np.array(self.queries)[query_in_test])
+        return train, test
 
 
 
 class TwoMoons(ActiveDataset):
-    def __init__(self, ellipse_centers, ellipse_radius, std, samples, random_state=None):
-        assert(len(samples)==2)
+    def __init__(self, ellipse_centers, ellipse_radius, cluster_std, cluster_samples, random_state=None):
+        assert(len(cluster_samples)==2)
         self.n_features= len(ellipse_centers[0])
         self.centers= ellipse_centers
         self.radiuses= ellipse_radius
-        self.std= std
-        self.samples= np.array(samples).astype(int)
-        super(TwoMoons, self).__init__(np.sum(samples), random_state)
+        self.std= cluster_std
+        self.samples= np.array(cluster_samples).astype(int)
+        super(TwoMoons, self).__init__(np.sum(cluster_samples), random_state)
         self.name= "Moons"
 
     def generate_data(self):

@@ -1,5 +1,5 @@
 import numpy as np
-from datasets import CenteredCircles, PointClouds, MixedClusters, CIFAR10_simclr, ActiveDataset
+from datasets import CenteredCircles, PointClouds, MixedClusters, CIFAR10_simclr, TwoMoons
 from activelearners import ProbCoverSampler, active_learning_algo
 from clustering import MySpectralClustering, MyKMeans, ClusteringAlgo
 from IPython import embed
@@ -29,7 +29,7 @@ cluster_samples=cluster_samples.astype(int)
 
 clouds_data= PointClouds(cluster_centers, cluster_std, cluster_samples)
 
-## Initialize the point clouds dataset
+## Initialize the mixed clusters dataset
 m = 400
 cluster_centers = [(0, -5), (-6, 0), (5, 4)]
 cluster_std = [0.5, 0.8, 1.2]
@@ -38,15 +38,17 @@ cluster_samples = p*m
 cluster_samples=cluster_samples.astype(int)
 
 mixed_clusters= MixedClusters(cluster_centers, cluster_std, cluster_samples)
-#mixed_clusters.plot_dataset()
 
 
-## Clustering methods
-clustering_spectral = MySpectralClustering(circles_data, 3, 1)
-clustering_kmeans = MyKMeans(circles_data, 3)
+## Initialize CIFAR10 extracted features dataset
+cifar10_features= CIFAR10_simclr(n_epochs=100)
+
 
 # Experiments on the circles dataset
 def experiment1():
+    clustering_spectral = MySpectralClustering(circles_data, 3, 1)
+    clustering_kmeans = MyKMeans(circles_data, 3)
+
     active_learning_algo(circles_data, clustering_spectral, 150, 5, 0.9, 0.5)
     active_learning_algo(circles_data, clustering_kmeans, 150, 5, 0.9, 0.5)
 
@@ -93,7 +95,6 @@ def experiment3(dataset, M, B, k, threshold, p_cover, gamma, plot_lowerbound= Fa
     plt.title(f"Accuracy of a nearest neighbour classifier on dataset {dataset.name}")
     plt.show()
 
-data= CIFAR10_simclr(100)
 
 ######## Experiments
 
@@ -106,6 +107,8 @@ gamma=3
 
 embed()
 experiment3(circles_data, M, B, 3, threshold, p_cover, gamma)
+experiment3(circles_data, M, B, 3, threshold, p_cover, gamma, True)
 
+experiment2(cifar10_features, 1000, 50, 10, "kmeans", 0.9, 0.3, 3)
 # experiment3(mixed_clusters, M, B, 2, threshold, p_cover, gamma)
 # experiment3(clouds_data, M, B, 4, threshold, p_cover, gamma)
