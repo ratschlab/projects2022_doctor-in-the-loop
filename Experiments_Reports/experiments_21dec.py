@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from models import Classifier1NN
 from helper import check_cover, get_radius, cover, get_radius_faiss
 from helper import adjacency_graph, adjacency_graph_faiss, get_purity, get_purity_faiss, get_nearest_neighbour, get_nn_faiss
-
+from sklearn.model_selection import train_test_split
 # ========================Initializing all the datasets =======================
 
 n_train= 800
@@ -78,16 +78,25 @@ moons= {
     }
 }
 
+
+
 ##CIFAR10 dataset
+n_train, p_train= 800, 0.8
+n_test, p_test= 200, 0.2
+
 cifar10_100epochs= CIFAR10_simclr(n_epochs=100)
 cifar10_200epochs= CIFAR10_simclr(n_epochs=200)
 cifar10_400epochs= CIFAR10_simclr(n_epochs=400)
 cifar10_800epochs= CIFAR10_simclr(n_epochs=800)
 cifar10_1000epochs= CIFAR10_simclr(n_epochs=1000)
+train_idx, test_idx= train_test_split(np.arange(10000), test_size=p_test, random_state=1)
+
 
 
 ## List containing all the datasets
 dataset_parameters= {"circles": circles, "moons": moons, "clouds": clouds}
+cifar10= [cifar10_100epochs, cifar10_200epochs, cifar10_400epochs,
+              cifar10_800epochs, cifar10_1000epochs]
 
 # ========================Active learning accuracy=======================
 def accuracy_probcover(train_dataset, test_dataset,
@@ -120,7 +129,7 @@ def accuracy_probcover(train_dataset, test_dataset,
         activelearner.query(B)
         activelearner.update_labeled(plot_clustering)
         model.update()
-        covers.append(cover(train_dataset.x, train_dataset.queries, activelearner.radius))
+        # covers.append(cover(train_dataset.x, train_dataset.queries, activelearner.radius))
         radiuses.append(activelearner.radius)
         accuracy_train.append(model.accuracy)
         accuracy_test.append(model.get_accuracy(test_dataset))
@@ -193,31 +202,43 @@ def accuracy_simulation_average(train_dataset, test_dataset,
 
 ## Accuracy plots for all toy datasets
 n_queries= np.concatenate((np.repeat(5, 10), np.repeat(10, 4), np.repeat(20,3)))
+n_queries= np.array([10,10])
 purity_threshold=0.95
 gamma=3
-n_iter=10
+n_iter=1
+simulate_toy_data= False
+simulate_cifar10_data= True
 
-for dataset_name, dataset_setting in dataset_parameters.items():
-    for dataset_setting_name, params in dataset_setting.items():
-        print(dataset_name, dataset_setting_name, params)
-        # Creating the train test datasets
-        if dataset_name=="clouds":
-            train_dataset= PointClouds(params["centers"], params["std"], (params["p"]*n_train).astype(int), random_state=1)
-            test_dataset= PointClouds(params["centers"], params["std"], (params["p"]*n_test).astype(int), random_state=2)
-        elif dataset_name=="circles":
-            train_dataset = CenteredCircles(params["center"], params["r"], (params["p"]*n_train).astype(int), params["std"], random_state=1)
-            test_dataset = CenteredCircles(params["center"], params["r"], (params["p"]*n_test).astype(int), params["std"], random_state=2)
-        elif dataset_name=="moons":
-            train_dataset = TwoMoons(params["centers"], params["r"], params["std"], (params["p"]* n_train).astype(int), random_state=1)
-            test_dataset = TwoMoons(params["centers"], params["r"], params["std"], (params["p"]* n_test).astype(int), random_state=2)
-        train_dataset.plot_dataset()
-        test_dataset.plot_dataset()
-        k= len(np.unique(train_dataset.y))
-        accuracy_simulation_average(train_dataset, test_dataset, n_queries, k, purity_threshold, gamma, n_iter, dataset_setting_name)
+if simulate_toy_data:
+    for dataset_name, dataset_setting in dataset_parameters.items():
+        for dataset_setting_name, params in dataset_setting.items():
+            print(dataset_name, dataset_setting_name, params)
+            # Creating the train test datasets
+            if dataset_name=="clouds":
+                train_dataset= PointClouds(params["centers"], params["std"], (params["p"]*n_train).astype(int), random_state=1)
+                test_dataset= PointClouds(params["centers"], params["std"], (params["p"]*n_test).astype(int), random_state=2)
+            elif dataset_name=="circles":
+                train_dataset = CenteredCircles(params["center"], params["r"], (params["p"]*n_train).astype(int), params["std"], random_state=1)
+                test_dataset = CenteredCircles(params["center"], params["r"], (params["p"]*n_test).astype(int), params["std"], random_state=2)
+            elif dataset_name=="moons":
+                train_dataset = TwoMoons(params["centers"], params["r"], params["std"], (params["p"]* n_train).astype(int), random_state=1)
+                test_dataset = TwoMoons(params["centers"], params["r"], params["std"], (params["p"]* n_test).astype(int), random_state=2)
+            train_dataset.plot_dataset()
+            test_dataset.plot_dataset()
+            k= len(np.unique(train_dataset.y))
+            accuracy_simulation_average(train_dataset, test_dataset, n_queries, k, purity_threshold, gamma, n_iter, dataset_setting_name)
+
+if simulate_cifar10_data:
+    for dataset in cifar10:
+        #Define the test and train datasets
+        train_dataset, test_dataset= dataset.split(train_idx, test_idx)
+        print("Split the dataset into train-test")
+        accuracy_simulation_average(train_dataset, test_dataset, n_queries, 10, purity_threshold,
+                                    gamma, n_iter, "regular")
+
 
 
 
 embed()
 
 
-# ========================Initializing all the datasets =======================
