@@ -123,6 +123,7 @@ class CIFAR10_simclr(ActiveDataset):
         #TODO Change path so that it works in general
         self.path= "/Users/victoriabarenne/projects2022_doctor-in-the-loop/cifar10features_simclr/"
         self.n_epochs= n_epochs
+        self.name=f"CIFAR10_{self.n_epochs}epochs"
         super(CIFAR10_simclr, self).__init__(10000, random_state)
 
 
