@@ -6,6 +6,7 @@ from sklearn.cluster import KMeans
 import seaborn as sns
 import matplotlib.pyplot as plt
 from helper import accuracy_clustering, check_cover, get_purity, get_radius, get_nearest_neighbour, accuracy_score
+from helper import get_purity_faiss, get_radius_faiss, get_nn_faiss, adjacency_graph_faiss
 from models import Classifier1NN
 
 
@@ -55,7 +56,7 @@ class RandomSampler(ActiveLearner):
         super().__init__(dataset, model)
         self.name="Random Sampler"
 
-    def query(self, M, B, n_initial=1):
+    def query(self, M, B=1, n_initial=1):
         super().query(M,B,n_initial)
 
         for i in range(int(M/B)):
@@ -69,7 +70,7 @@ class TypiclustSampler(ActiveLearner):
         self.name="Typiclust Sampler"
 
 
-    def query(self, M, B, plot=[False, False],  n_initial=1):
+    def query(self, M, B=1, plot=[False, False],  n_initial=1):
         super().query(M,B,n_initial)
 
         assert(sum(plot)<=1) # You can only choose one type of plot output
@@ -203,6 +204,99 @@ class ProbCoverSampler(ActiveLearner):
             covered_vertices = np.where(graph[c_id, :] == 1)[0]
             graph[:, covered_vertices] = 0
             self.dataset.observe(c_id)
+
+class ProbCoverSampler_Faiss(ActiveLearner):
+    def __init__(self, dataset, purity_threshold,
+                 clustering:ClusteringAlgo,
+                 plot=[False, False],
+                 search_range=[0,100], search_step=0.1,
+                 model=None):
+
+        super().__init__(dataset, model)
+        self.name = "ProbCover Sampler"
+        self.clustering= clustering
+
+        plot_clustering = plot[0]
+        plot_unpure_balls = plot[1]
+
+        # Get pseudo labels
+        self.clustering.fit_labeled()
+        self.pseudo_labels = self.clustering.pseudo_labels
+        if plot_clustering:
+            self.clustering.plot()
+
+
+        self.purity_threshold= purity_threshold
+
+        # Get radius for given purity threshold
+        self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range, search_step,
+                                                  plot_unpure_balls)
+        print(f"ProbCover Sampler initialized for threshold {self.purity_threshold} with radius {self.radius}")
+
+        # Initialize the graph
+        self.lims, _, self.I = adjacency_graph_faiss(self.dataset.x, self.radius)
+
+    def update_radius(self, new_radius):
+        self.radius= new_radius
+        self.lims, _, self.I = adjacency_graph_faiss(self.dataset.x, self.radius)
+        print(f"Updated ProbCover Sampler radius: {self.radius}")
+
+    def update_labeled(self, plot_clustering=False):
+        self.clustering.fit_labeled(self.dataset.queries)
+        self.pseudo_labels= self.clustering.pseudo_labels
+        self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, [0,10], 0.01)
+        self.lims, _, self.I= adjacency_graph_faiss(self.dataset.x, self.radius)
+        print(f"Updated ProbCover Sampler using the new acquired labels, new radius: {self.radius}")
+        if plot_clustering:
+            self.clustering.plot()
+
+    def query(self, M, B=1, n_initial=1):
+        lims, I = self.lims.copy(), self.I.copy()
+        # Initialize the labels
+        n_pool = self.dataset.n_points
+
+        # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
+        if np.sum(self.dataset.labeled) >= 1:
+            # Recover all the covered vertices
+            covered= np.array([], dtype=int)
+            for u in self.dataset.queries:
+                covered= np.concatenate((covered, I[lims[u]:lims[u + 1]]), axis=0)
+            covered= np.unique(covered)
+            I_covered_idx = np.sort(np.where(np.isin(I, covered))[0])
+
+            #Remove all incoming edges to the covered vertices
+            n_covered = np.zeros(len(lims))
+            for l in range(1, len(lims)):
+                n_covered[l] = np.sum(((lims[l - 1] <= I_covered_idx) & (I_covered_idx < lims[l])))
+            lims = lims - np.cumsum(n_covered)
+            lims= lims.astype(int)
+            I = np.delete(I, I_covered_idx)
+
+
+        for m in range(M):
+            # get the unlabeled point with highest out-degree
+            #out_degrees = np.sum(graph, axis=1)
+            out_degrees= lims[1:] - lims[:-1]
+            max_out_degree = np.argmax(out_degrees[self.dataset.labeled == 0])
+            c_id = np.arange(n_pool)[self.dataset.labeled == 0][max_out_degree]
+            assert ((out_degrees[c_id] == np.max(out_degrees)) & (self.dataset.labeled[c_id] == 0))
+
+            # get all the points covered by c_id
+            covered_vertices = I[lims[c_id]:lims[c_id + 1]]
+            I_covered_idx= np.sort(np.where(np.isin(I, covered_vertices))[0])
+
+            # Remove all incoming edges to the points covered by c_id
+            #graph[:, covered_vertices] = 0
+            n_covered = np.zeros(len(lims))
+            for l in range(1, len(lims)):
+                n_covered[l] = np.sum(((lims[l - 1] <= I_covered_idx) & (I_covered_idx < lims[l])))
+            lims = lims - np.cumsum(n_covered)
+            lims= lims.astype(int)
+
+            I = np.delete(I, I_covered_idx)
+            self.dataset.observe(c_id)
+
+
 
 
 def active_learning_algo(dataset, clustering, M, B, initial_purity_threshold, p_cover=1):
