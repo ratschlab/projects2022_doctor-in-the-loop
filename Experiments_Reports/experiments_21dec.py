@@ -10,6 +10,13 @@ from models import Classifier1NN
 from helper import check_cover, get_radius, cover, get_radius_faiss
 from helper import adjacency_graph, adjacency_graph_faiss, get_purity, get_purity_faiss, get_nearest_neighbour, get_nn_faiss
 from sklearn.model_selection import train_test_split
+import logging
+
+
+
+logging.basicConfig(filename= "pipeline.log", level=logging.INFO,
+            filemode="w", format="[%(asctime)s | %(levelname)s] %(message)s")
+
 # ========================Initializing all the datasets =======================
 
 n_train= 800
@@ -163,13 +170,14 @@ def accuracy_simulation_average(train_dataset, test_dataset,
 
 
     for n in range(n_iter):
+        logging.info(f"Iteration {n}")
         _, _, acc_spectral[n,:], acc_spectral_test= accuracy_probcover(train_dataset, test_dataset, n_queries, k, "spectral", purity_threshold, gamma)
         _, _, acc_kmeans[n,:], acc_kmeans_test= accuracy_probcover(train_dataset, test_dataset, n_queries, k, "kmeans", purity_threshold, gamma)
         _, _, acc_oracle[n,:], acc_oracle_test= accuracy_probcover(train_dataset, test_dataset, n_queries, k, "oracle", purity_threshold, gamma)
         acc_random[n,:], acc_random_test= accuracy_random_sampling(train_dataset, test_dataset, n_queries)
 
-    pd.DataFrame(np.concatenate((acc_spectral, acc_kmeans, acc_oracle, acc_random), axis=0)).to_csv(f"trainaccuracy_{dataset_name}_{case}_{n_iter}.csv")
-    pd.DataFrame(np.concatenate((acc_spectral_test, acc_kmeans_test, acc_oracle_test, acc_random_test), axis=0)).to_csv(f"testaccuracy_{dataset_name}_{case}_{n_iter}.csv")
+    pd.DataFrame(np.concatenate((acc_spectral, acc_kmeans, acc_oracle, acc_random), axis=0)).to_csv(f"trainaccuracy_{train_dataset.name}_{case}_{n_iter}.csv")
+    pd.DataFrame(np.concatenate((acc_spectral_test, acc_kmeans_test, acc_oracle_test, acc_random_test), axis=0)).to_csv(f"testaccuracy_{test_dataset.name}_{case}_{n_iter}.csv")
 
     mean_spectral, std_spectral = np.mean(acc_spectral, axis=0), np.std(acc_spectral, axis=0)
     mean_kmeans, std_kmeans = np.mean(acc_kmeans, axis=0), np.std(acc_kmeans, axis=0)
@@ -201,11 +209,11 @@ def accuracy_simulation_average(train_dataset, test_dataset,
 
 
 ## Accuracy plots for all toy datasets
-n_queries= np.concatenate((np.repeat(5, 10), np.repeat(10, 4), np.repeat(20,3)))
-n_queries= np.array([10,10])
+n_queries_toy= np.concatenate((np.repeat(5, 10), np.repeat(10, 4), np.repeat(20,3)))
+n_queries_cifar= np.concatenate((np.repeat(50, 10), np.repeat(100, 4), np.repeat(200,3)))
 purity_threshold=0.95
 gamma=3
-n_iter=1
+n_iter=10
 simulate_toy_data= False
 simulate_cifar10_data= True
 
@@ -226,14 +234,15 @@ if simulate_toy_data:
             train_dataset.plot_dataset()
             test_dataset.plot_dataset()
             k= len(np.unique(train_dataset.y))
-            accuracy_simulation_average(train_dataset, test_dataset, n_queries, k, purity_threshold, gamma, n_iter, dataset_setting_name)
+            logging.info(f"Calculating accuracy for {dataset_setting_name} {train_dataset.name} for {n_iter} iterations")
+            accuracy_simulation_average(train_dataset, test_dataset, n_queries_toy, k, purity_threshold, gamma, n_iter, dataset_setting_name)
 
 if simulate_cifar10_data:
     for dataset in cifar10:
         #Define the test and train datasets
         train_dataset, test_dataset= dataset.split(train_idx, test_idx)
-        print("Split the dataset into train-test")
-        accuracy_simulation_average(train_dataset, test_dataset, n_queries, 10, purity_threshold,
+        logging.info(f"Calculating accuracy for {dataset.name} for {n_iter} iterations")
+        accuracy_simulation_average(train_dataset, test_dataset, n_queries_cifar, 10, purity_threshold,
                                     gamma, n_iter, "regular")
 
 
