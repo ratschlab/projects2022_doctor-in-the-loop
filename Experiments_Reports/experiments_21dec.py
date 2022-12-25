@@ -1,5 +1,5 @@
 import numpy as np
-from datasets import CenteredCircles, PointClouds, MixedClusters, CIFAR10_simclr, TwoMoons
+from datasets import CenteredCircles, PointClouds, MixedClusters, CIFAR_simclr, TwoMoons
 from activelearners import ProbCoverSampler, ProbCoverSampler_Faiss, active_learning_algo, RandomSampler
 from clustering import MySpectralClustering, MyKMeans, OracleClassifier, ClusteringAlgo
 from IPython import embed
@@ -91,20 +91,32 @@ moons= {
 n_train, p_train= 800, 0.8
 n_test, p_test= 200, 0.2
 
-cifar10_100epochs= CIFAR10_simclr(n_epochs=100)
-cifar10_200epochs= CIFAR10_simclr(n_epochs=200)
-cifar10_400epochs= CIFAR10_simclr(n_epochs=400)
-cifar10_800epochs= CIFAR10_simclr(n_epochs=800)
-cifar10_1000epochs= CIFAR10_simclr(n_epochs=1000)
-train_idx, test_idx= train_test_split(np.arange(10000), test_size=p_test, random_state=1)
+cifar10_100epochs= CIFAR_simclr(n_classes=10, n_epochs=100)
+cifar10_200epochs= CIFAR_simclr(n_classes=10, n_epochs=200)
+cifar10_400epochs= CIFAR_simclr(n_classes=10, n_epochs=400)
+cifar10_800epochs= CIFAR_simclr(n_classes=10, n_epochs=800)
+cifar10_1000epochs= CIFAR_simclr(n_classes=10, n_epochs=1000)
+train_idx10, test_idx10= train_test_split(np.arange(10000), test_size=p_test, random_state=1)
 
+
+##CIFAR100 dataset
+n_train, p_train= 800, 0.8
+n_test, p_test= 200, 0.2
+
+cifar100_100epochs= CIFAR_simclr(n_classes=100, n_epochs=100)
+cifar100_200epochs= CIFAR_simclr(n_classes=100, n_epochs=200)
+cifar100_400epochs= CIFAR_simclr(n_classes=100, n_epochs=400)
+cifar100_800epochs= CIFAR_simclr(n_classes=100, n_epochs=800)
+cifar100_1000epochs= CIFAR_simclr(n_classes=100, n_epochs=1000)
+train_idx100, test_idx100= train_test_split(np.arange(10000), test_size=p_test, random_state=2)
 
 
 ## List containing all the datasets
 dataset_parameters= {"circles": circles, "moons": moons, "clouds": clouds}
 cifar10= [cifar10_100epochs, cifar10_200epochs, cifar10_400epochs,
               cifar10_800epochs, cifar10_1000epochs]
-
+cifar100= [cifar100_100epochs, cifar100_200epochs, cifar100_400epochs,
+              cifar100_800epochs, cifar100_1000epochs]
 # ========================Active learning accuracy=======================
 def accuracy_probcover(train_dataset, test_dataset,
                        n_queries: np.array, k,
@@ -210,12 +222,16 @@ def accuracy_simulation_average(train_dataset, test_dataset,
 
 ## Accuracy plots for all toy datasets
 n_queries_toy= np.concatenate((np.repeat(5, 10), np.repeat(10, 4), np.repeat(20,3)))
-n_queries_cifar= np.concatenate((np.repeat(50, 10), np.repeat(100, 4), np.repeat(200,3)))
+n_queries_cifar= np.concatenate((np.repeat(50, 4), np.repeat(100, 5), np.repeat(200,5)))
+n_queries_cifar= np.concatenate((np.repeat(50, 6), np.repeat(100, 4)))
+
 purity_threshold=0.95
 gamma=3
-n_iter=10
+n_iter=1
 simulate_toy_data= False
-simulate_cifar10_data= True
+simulate_cifar10_data= False
+simulate_cifar100_data= True
+
 
 if simulate_toy_data:
     for dataset_name, dataset_setting in dataset_parameters.items():
@@ -234,18 +250,26 @@ if simulate_toy_data:
             train_dataset.plot_dataset()
             test_dataset.plot_dataset()
             k= len(np.unique(train_dataset.y))
+
             logging.info(f"Calculating accuracy for {dataset_setting_name} {train_dataset.name} for {n_iter} iterations")
             accuracy_simulation_average(train_dataset, test_dataset, n_queries_toy, k, purity_threshold, gamma, n_iter, dataset_setting_name)
 
 if simulate_cifar10_data:
     for dataset in cifar10:
         #Define the test and train datasets
-        train_dataset, test_dataset= dataset.split(train_idx, test_idx)
+        train_dataset, test_dataset= dataset.split(train_idx10, test_idx10)
         logging.info(f"Calculating accuracy for {dataset.name} for {n_iter} iterations")
         accuracy_simulation_average(train_dataset, test_dataset, n_queries_cifar, 10, purity_threshold,
                                     gamma, n_iter, "regular")
 
 
+if simulate_cifar100_data:
+    for dataset in cifar100:
+        #Define the test and train datasets
+        train_dataset, test_dataset= dataset.split(train_idx100, test_idx100)
+        logging.info(f"Calculating accuracy for {dataset.name} for {n_iter} iterations")
+        accuracy_simulation_average(train_dataset, test_dataset, n_queries_cifar, 100, purity_threshold,
+                                    gamma, n_iter, "regular")
 
 
 embed()
