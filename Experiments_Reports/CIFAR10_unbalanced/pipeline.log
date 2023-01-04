@@ -1,0 +1,30 @@
+[2022-12-28 11:27:28,051 | INFO] Calculating accuracy for unbalanced CIFAR10_100epochs for 1 iterations
+[2022-12-28 11:27:28,051 | INFO] Iteration 0
+[2022-12-28 11:27:28,051 | INFO] Spectral
+[2022-12-28 11:49:23,546 | INFO] Kmeans
+[2022-12-28 11:53:21,678 | INFO] Oracle
+[2022-12-28 11:56:09,207 | INFO] Random Sampling
+[2022-12-28 11:56:13,257 | INFO] Calculating accuracy for unbalanced CIFAR10_200epochs for 1 iterations
+[2022-12-28 11:56:13,257 | INFO] Iteration 0
+[2022-12-28 11:56:13,257 | INFO] Spectral
+[2022-12-28 12:01:07,554 | INFO] Kmeans
+[2022-12-28 12:05:10,947 | INFO] Oracle
+[2022-12-28 12:08:02,978 | INFO] Random Sampling
+[2022-12-28 12:08:06,676 | INFO] Calculating accuracy for unbalanced CIFAR10_400epochs for 1 iterations
+[2022-12-28 12:08:06,676 | INFO] Iteration 0
+[2022-12-28 12:08:06,676 | INFO] Spectral
+[2022-12-28 12:13:05,514 | INFO] Kmeans
+[2022-12-28 12:17:08,517 | INFO] Oracle
+[2022-12-28 12:19:58,549 | INFO] Random Sampling
+[2022-12-28 12:20:02,511 | INFO] Calculating accuracy for unbalanced CIFAR10_800epochs for 1 iterations
+[2022-12-28 12:20:02,511 | INFO] Iteration 0
+[2022-12-28 12:20:02,511 | INFO] Spectral
+[2022-12-28 12:27:01,787 | INFO] Kmeans
+[2022-12-28 12:31:03,169 | INFO] Oracle
+[2022-12-28 12:33:48,564 | INFO] Random Sampling
+[2022-12-28 12:33:52,436 | INFO] Calculating accuracy for unbalanced CIFAR10_1000epochs for 1 iterations
+[2022-12-28 12:33:52,436 | INFO] Iteration 0
+[2022-12-28 12:33:52,436 | INFO] Spectral
+[2022-12-28 12:43:43,156 | INFO] Kmeans
+[2022-12-28 12:47:45,268 | INFO] Oracle
+[2022-12-28 12:50:34,870 | INFO] Random Sampling

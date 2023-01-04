@@ -7,14 +7,11 @@ import seaborn as sns
 import pandas as pd
 import matplotlib.pyplot as plt
 from models import Classifier1NN
-
-from helper import change_labels, accuracy_clustering, coclust
 from helper import check_cover, get_radius, cover, get_radius_faiss
 from helper import adjacency_graph, adjacency_graph_faiss, get_purity, get_purity_faiss, get_nearest_neighbour, get_nn_faiss
 from sklearn.model_selection import train_test_split
 import logging
-from clustering import MyKMeans, OracleClassifier, MySpectralClustering
-from sklearn.neighbors import KNeighborsClassifier
+
 
 
 logging.basicConfig(filename= "pipeline.log", level=logging.INFO,
@@ -242,30 +239,6 @@ def accuracy_simulation_average(train_dataset, test_dataset,
     plt.show()
 
 
-def unsupervised_accuracy(train_dataset, test_dataset, k, gamma):
-    #kmeans
-    train_dataset.restart()
-    test_dataset.restart()
-    kmeans = MyKMeans(train_dataset, k, random_clustering=1)
-    kmeans.fit_labeled()
-    # Spectral Clustering
-    spectral = MySpectralClustering(train_dataset, k, gamma, random_clustering=1)
-    spectral.fit_labeled()
-
-    model_kmeans = KNeighborsClassifier(n_neighbors=1)
-    model_kmeans.fit(train_dataset.x, kmeans.pseudo_labels)
-    predicted_kmeans= model_kmeans.predict(train_dataset.x)
-
-    model_spectral = KNeighborsClassifier(n_neighbors=1)
-    model_spectral.fit(train_dataset.x, spectral.pseudo_labels)
-    predicted_spectral= model_spectral.predict(train_dataset.x)
-
-    acc_train_kmeans = coclust(train_dataset.y, predicted_kmeans)
-    acc_test_kmeans = coclust(test_dataset.y, model_kmeans.predict(test_dataset.x))
-    acc_train_spectral = coclust(train_dataset.y, predicted_spectral)
-    acc_test_spectral= coclust(test_dataset.y, model_spectral.predict(test_dataset.x))
-    return (acc_train_kmeans, acc_train_spectral, acc_test_kmeans, acc_test_spectral)
-
 
 ## Accuracy plots for all toy datasets
 n_queries_toy= np.concatenate((np.repeat(5, 10), np.repeat(10, 4), np.repeat(20,3)))
@@ -276,11 +249,11 @@ n_queries_cifar10_unbalanced= np.concatenate((np.repeat(50, 4), np.repeat(100, 5
 
 purity_threshold=0.95
 gamma=3
-n_iter=10
-simulate_toy_data= True
-simulate_cifar10_data= True
-simulate_cifar100_data= True
-simulate_unbalanced_cifar10_data= False
+n_iter=1
+simulate_toy_data= False
+simulate_cifar10_data= False
+simulate_cifar100_data= False
+simulate_unbalanced_cifar10_data= True
 
 
 if simulate_toy_data:
@@ -303,8 +276,6 @@ if simulate_toy_data:
 
             logging.info(f"Calculating accuracy for {dataset_setting_name} {train_dataset.name} for {n_iter} iterations")
             accuracy_simulation_average(train_dataset, test_dataset, n_queries_toy, k, purity_threshold, gamma, n_iter, dataset_setting_name)
-            unsupervised_acc = unsupervised_accuracy(train_dataset, test_dataset, k, gamma)
-            pd.DataFrame(unsupervised_acc).to_csv(f"unsupervised_{train_dataset.name}_{dataset_setting_name}.csv")
 
 if simulate_cifar10_data:
     for dataset in cifar10:
@@ -313,8 +284,7 @@ if simulate_cifar10_data:
         logging.info(f"Calculating accuracy for {dataset.name} for {n_iter} iterations")
         accuracy_simulation_average(train_dataset, test_dataset, n_queries_cifar10, 10, purity_threshold,
                                     gamma, n_iter, "regular")
-        unsupervised_acc= unsupervised_accuracy(train_dataset, test_dataset, 10, gamma)
-        pd.DataFrame(unsupervised_acc).to_csv(f"unsupervised_{train_dataset.name}.csv")
+
 
 if simulate_cifar100_data:
     for dataset in cifar100:
@@ -323,20 +293,18 @@ if simulate_cifar100_data:
         logging.info(f"Calculating accuracy for {dataset.name} for {n_iter} iterations")
         accuracy_simulation_average(train_dataset, test_dataset, n_queries_cifar100, 100, purity_threshold,
                                     gamma, n_iter, "regular")
-        unsupervised_acc = unsupervised_accuracy(train_dataset, test_dataset, 100, gamma)
-        pd.DataFrame(unsupervised_acc).to_csv(f"unsupervised_{train_dataset.name}.csv")
 
-
-# if simulate_unbalanced_cifar10_data:
-#     for dataset in cifar10:
-#         #Define the test and train datasets
-#         train_dataset, test_dataset= dataset.split(idx_train_unbalanced, idx_test_unbalanced)
-#         logging.info(f"Calculating accuracy for unbalanced {dataset.name} for {n_iter} iterations")
-#         accuracy_simulation_average(train_dataset, test_dataset, n_queries_cifar10_unbalanced, 10, purity_threshold,
-#                                     gamma, n_iter, "unbalanced")
-#
+if simulate_unbalanced_cifar10_data:
+    for dataset in cifar10:
+        #Define the test and train datasets
+        train_dataset, test_dataset= dataset.split(idx_train_unbalanced, idx_test_unbalanced)
+        logging.info(f"Calculating accuracy for unbalanced {dataset.name} for {n_iter} iterations")
+        accuracy_simulation_average(train_dataset, test_dataset, n_queries_cifar10_unbalanced, 10, purity_threshold,
+                                    gamma, n_iter, "unbalanced")
 
 
 
+
+embed()
 
 
