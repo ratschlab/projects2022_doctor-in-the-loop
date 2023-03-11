@@ -96,9 +96,10 @@ class CenteredCircles(ActiveDataset):
         return x,y
 
 class MixedClusters(ActiveDataset):
-    def __init__(self, cluster_centers, cluster_std, cluster_samples, random_state=None):
+    def __init__(self, n_classes, cluster_centers, cluster_std, cluster_samples, random_state=None):
         self.n_features= len(cluster_centers[0])
         self.n_cluster= len(cluster_std)
+        self.n_classes= n_classes
         self.cluster_centers= cluster_centers
         self.cluster_std= cluster_std
         self.cluster_samples= cluster_samples.astype(int)
@@ -113,7 +114,7 @@ class MixedClusters(ActiveDataset):
         classes= np.unique(y)
         for c in classes:
             idx= np.where(y==c)[0]
-            clustering= KMeans(n_clusters=2).fit(x[idx,:])
+            clustering= KMeans(n_clusters=self.n_classes).fit(x[idx,:])
             labels[idx]= clustering.labels_
         return x, labels
 
@@ -145,6 +146,7 @@ class TwoMoons(ActiveDataset):
         return x, y
 
 
+
 class CIFAR_simclr(ActiveDataset):
     def __init__(self, n_classes, n_epochs, random_state=None):
         #TODO Change path so that it works in general
@@ -174,3 +176,6 @@ class CIFAR_simclr(ActiveDataset):
         train.queries= list(np.array(self.queries)[query_in_train])
         test.queries= list(np.array(self.queries)[query_in_test])
         return train, test
+
+
+

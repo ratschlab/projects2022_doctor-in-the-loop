@@ -33,10 +33,6 @@ class OracleClassifier(ClusteringAlgo):
     def __init__(self, dataset, n_clusters, random_clustering=None):
         super(OracleClassifier, self).__init__(dataset, n_clusters, random_clustering)
         self.name="Ground truth classifier"
-
-    def fit_labeled(self, sampled_idx=np.array([], dtype=int)):
-        self.sampled_idx=sampled_idx
-        #Does not take sampled_idx into account
         self.pseudo_labels= self.dataset.y
 
 
@@ -44,42 +40,34 @@ class MyKMeans(ClusteringAlgo):
     def __init__(self, dataset, n_clusters, random_clustering=None):
         super(MyKMeans, self).__init__(dataset, n_clusters, random_clustering)
         self.name="Kmeans"
-
-    def fit_labeled(self, sampled_idx=np.array([], dtype=int)):
-        self.sampled_idx=sampled_idx
-        #Does not take sampled_idx into account
         kmeans = KMeans(n_clusters=self.n_clusters, random_state= self.random_clustering).fit(self.dataset.x)
         self.pseudo_labels= kmeans.labels_
-        self.centroids= kmeans.cluster_centers_
-
 
 class MySpectralClustering(ClusteringAlgo):
-    def __init__(self, dataset, n_clusters, gamma, random_clustering=None):
+    def __init__(self, dataset, n_clusters, gamma, alpha=1, random_clustering=None, enforce_closeness= True, enforce_separability=True):
         super(MySpectralClustering, self).__init__(dataset, n_clusters, random_clustering)
         self.gamma=gamma
         self.name= "Spectral clustering"
-
-    def fit_labeled(self, sampled_idx=np.array([], dtype=int)):
-        self.sampled_idx= sampled_idx
+        self.enforce_closeness= enforce_closeness
+        self.enforce_separability= enforce_separability
+        self.alpha= alpha
         spectralclustering = SpectralClustering(n_clusters=self.n_clusters, n_init=10, gamma=self.gamma, affinity='rbf',
-                                                assign_labels='kmeans', random_state=self.random_clustering).fit(self.dataset.x)
-        if len(self.sampled_idx)==0:
-            self.pseudo_labels= spectralclustering.labels_
-        elif len(self.sampled_idx)>0:
-            affinity_matrix = spectralclustering.affinity_matrix_
-            labels = np.array(self.dataset.y[sampled_idx]).reshape(-1, 1)
-            for u in sampled_idx:
-                for v in sampled_idx:
-                    if (self.dataset.y[u] == self.dataset.y[v]) & (u != v):
-                        affinity_matrix[u, v] = 1
-                        affinity_matrix[v, u] = 1
-                    elif (self.dataset.y[u] != self.dataset.y[v]):
-                        affinity_matrix[u, v] = 0
-                        affinity_matrix[v, u] = 0
+                                                assign_labels='kmeans', random_state=self.random_clustering).fit(
+            self.dataset.x)
+        self.affinity_matrix= spectralclustering.affinity_matrix_
+        self.pseudo_labels = spectralclustering.labels_
 
-            spectralclustering = SpectralClustering(n_clusters=self.n_clusters, n_init=10, affinity='precomputed',
-                                                    assign_labels='kmeans', random_state=self.random_clustering).fit(affinity_matrix)
-            self.pseudo_labels = spectralclustering.labels_
+    def fit_labeled(self, sampled_idx):
+        for u in sampled_idx:
+            for v in sampled_idx:
+                if (self.dataset.y[u] == self.dataset.y[v]) & (u != v) & self.enforce_closeness:
+                    self.affinity_matrix[u, v] = self.alpha
+                    self.affinity_matrix[v, u] = self.alpha
+                elif (self.dataset.y[u] != self.dataset.y[v]) & self.enforce_separability:
+                    self.affinity_matrix[u, v] = 0
+                    self.affinity_matrix[v, u] = 0
 
-
+        spectralclustering = SpectralClustering(n_clusters=self.n_clusters, n_init=10, affinity='precomputed',
+                                                assign_labels='kmeans', random_state=self.random_clustering).fit(self.affinity_matrix)
+        self.pseudo_labels = spectralclustering.labels_
 

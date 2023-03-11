@@ -1,6 +1,6 @@
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score
-
+from helper import coclust
 
 class Classifier1NN:
     def __init__(self, train_dataset):
@@ -17,7 +17,7 @@ class Classifier1NN:
         assert(len(self.train_dataset.queries)>0)
         self.model.fit(self.train_dataset.x[self.train_dataset.queries, :], self.train_dataset.y[self.train_dataset.queries])
         self.predicted_labels = self.model.predict(self.train_dataset.x)
-        self.accuracy = accuracy_score(self.predicted_labels, self.train_dataset.y)
+        self.accuracy = coclust(self.predicted_labels, self.train_dataset.y)
 
     def predict(self, new_data=None):
         if new_data is None:

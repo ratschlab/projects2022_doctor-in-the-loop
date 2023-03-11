@@ -142,6 +142,7 @@ class ProbCoverSampler(ActiveLearner):
                  clustering:ClusteringAlgo,
                  plot=[False, False],
                  search_range=[0,100], search_step=0.1,
+                 adaptive=False,
                  model=None):
 
         super().__init__(dataset, model)
@@ -163,22 +164,28 @@ class ProbCoverSampler(ActiveLearner):
         # Get radius for given purity threshold
         self.radius = get_radius(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range, search_step,
                                                   plot_unpure_balls)
-        print(f"ProbCover Sampler initialized for threshold {self.purity_threshold} with radius {self.radius}")
+        print(f"ProbCover Sampler initialized for threshold {self.purity_threshold} with radius {round(self.radius, 2)}")
 
         # Initialize the graph
         self.graph = adjacency_graph(self.dataset.x, self.radius)
 
+        self.adaptive=adaptive
+
     def update_radius(self, new_radius):
+        if self.adaptive==False:
+            raise ValueError("This active learner's radius and pseudo-labels are not adaptive")
         self.radius= new_radius
         self.graph= adjacency_graph(self.dataset.x, new_radius)
-        print(f"Updated ProbCover Sampler radius: {self.radius}")
+        print(f"Updated ProbCover Sampler radius: {round(self.radius, 2)}")
 
     def update_labeled(self, plot_clustering=False):
+        if self.adaptive==False:
+            raise ValueError("This active learner's radius and pseudo-labels are not adaptive")
         self.clustering.fit_labeled(self.dataset.queries)
         self.pseudo_labels= self.clustering.pseudo_labels
         self.radius = get_radius(self.purity_threshold, self.dataset.x, self.pseudo_labels, [0,10], 0.01)
         self.graph= adjacency_graph(self.dataset.x, self.radius)
-        print(f"Updated ProbCover Sampler using the new acquired labels, new radius: {self.radius}")
+        print(f"Updated ProbCover Sampler using the new acquired labels, new radius: {round(self.radius, 2)}")
         if plot_clustering:
             self.clustering.plot()
 
@@ -210,6 +217,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                  clustering:ClusteringAlgo,
                  plot=[False, False],
                  search_range=[0,100], search_step=0.1,
+                 adaptive= False,
                  model=None):
 
         super().__init__(dataset, model)
@@ -220,7 +228,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         plot_unpure_balls = plot[1]
 
         # Get pseudo labels
-        self.clustering.fit_labeled()
         self.pseudo_labels = self.clustering.pseudo_labels
         if plot_clustering:
             self.clustering.plot()
@@ -235,6 +242,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
 
         # Initialize the graph
         self.lims, _, self.I = adjacency_graph_faiss(self.dataset.x, self.radius)
+        self.adaptive= adaptive
 
     def update_radius(self, new_radius):
         self.radius= new_radius
@@ -242,6 +250,8 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         print(f"Updated ProbCover Sampler radius: {self.radius}")
 
     def update_labeled(self, plot_clustering=False):
+        if self.adaptive==False:
+            raise ValueError("This active learner's radius and pseudo-labels are not adaptive")
         self.clustering.fit_labeled(self.dataset.queries)
         self.pseudo_labels= self.clustering.pseudo_labels
         self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, [0,10], 0.01)
