@@ -19,21 +19,30 @@ class ActiveDataset:
             np.random.set_state(state)
 
         self.labeled = np.zeros(self.n_points, dtype=int)
-        self.queries = list()
+        self.queries = np.array([], dtype= int)
+        self.radiuses= np.array([])
 
 
     def restart(self):
         self.labeled = np.zeros(self.n_points, dtype=int)
         self.queries = np.array([], dtype=int)
+        self.radiuses= np.array([], dtype=int)
 
-    def observe(self, idx):
+    def observe(self, idx, radius= None):
         self.labeled[idx] = 1
         if isinstance(idx, int):
             idx = np.array([idx])
         elif idx.ndim == 0:
             idx = np.array([idx])
 
+        if isinstance(radius, float):
+            radius = np.array([radius])
+        elif radius.ndim == 0:
+            radius = np.array([radius])
+
         self.queries = np.concatenate((self.queries, idx), axis=0).astype(int)
+        if radius is not None:
+            self.radiuses = np.concatenate((self.radiuses, radius), axis=0)
 
     def plot_dataset(self):
         #Check that the data is 2-dimensional
@@ -44,7 +53,7 @@ class ActiveDataset:
         sns.scatterplot(x= self.x[:,0], y=self.x[:,1], hue=self.y, palette="Set2")
         plt.show()
 
-    def plot_al(self):
+    def plot_al(self, plot_circles= False):
         # Check that the data is 2-dimensional
         assert (self.x.shape[1] == 2)
 
@@ -52,7 +61,11 @@ class ActiveDataset:
         ax.axis('equal')
         sns.scatterplot(x=self.x[:, 0], y=self.x[:, 1], hue=self.y, palette="Set2")
         sns.scatterplot(x=self.x[self.queries, 0], y=self.x[self.queries, 1], color= "red", marker="P", s=150)
+        if plot_circles:
+            for i, u in enumerate(self.queries):
+                ax.add_patch(plt.Circle((self.x[u, 0], self.x[u, 1]), self.radiuses[i], color='red', fill=False, alpha=0.5))
         plt.show()
+
 
 
 

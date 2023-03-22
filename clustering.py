@@ -30,7 +30,8 @@ class ClusteringAlgo:
         plt.show()
 
 class OracleClassifier(ClusteringAlgo):
-    def __init__(self, dataset, n_clusters, random_clustering=None):
+    def __init__(self, dataset, random_clustering=None):
+        n_clusters= np.unique(dataset.y).shape[0]
         super(OracleClassifier, self).__init__(dataset, n_clusters, random_clustering)
         self.name="Ground truth classifier"
         self.pseudo_labels= self.dataset.y
