@@ -9,6 +9,8 @@ from activelearners import ProbCoverSampler_Faiss
 from copy import deepcopy
 from activelearners import ProbCoverSampler
 
+
+
 cluster_centers= np.array([[0,0]])
 cluster_std= [0.3]
 cluster_samples= np.array([400])
@@ -22,5 +24,5 @@ learner.adaptive_query(5)
 dataset.plot_al(plot_circles=True)
 
 
-
+embed()
 

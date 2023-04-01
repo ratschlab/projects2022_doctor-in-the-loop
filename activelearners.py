@@ -9,7 +9,7 @@ from helper import check_cover
 from helper import get_purity_faiss, get_radius_faiss, get_nn_faiss, adjacency_graph_faiss, get_covered_points
 from models import Classifier1NN
 from helper import get_nearest_neighbour
-
+from sklearn.neighbors import NearestNeighbors
 
 
 
@@ -374,7 +374,7 @@ class ProbCoverSampler(ActiveLearner):
             graph[:, covered_vertices] = 0
             self.dataset.observe(c_id, self.radius)
 
-    def adaptive_query(self, M, B=1, n_initial=1):
+    def adaptive_query(self, M, K=3, B=1, n_initial=1):
         graph = self.graph.copy()
         # Initialize the labels
         n_pool = self.dataset.n_points
@@ -393,9 +393,17 @@ class ProbCoverSampler(ActiveLearner):
             c_id = np.arange(n_pool)[self.dataset.labeled == 0][max_out_degree]
             assert ((out_degrees[c_id] == np.max(out_degrees[self.dataset.labeled == 0])) & (self.dataset.labeled[c_id] == 0))
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
-            rc= self.radius
+            if len(self.dataset.queries)>=K:
+                nbrs = NearestNeighbors(n_neighbors=K).fit(self.dataset.x[self.dataset.queries])
+                distances, indices = nbrs.kneighbors(self.dataset.x[c_id].reshape(1,-1))
+                nearest_radiuses_indices= indices[0]
+                print(nearest_radiuses_indices, self.dataset.queries, indices)
+                rc= np.mean(self.dataset.radiuses[nearest_radiuses_indices])
+                print(rc)
+            else:
+                rc= self.radius
             d = np.linalg.norm(self.dataset.x[c_id, :] - self.dataset.x[self.dataset.queries, :], axis=1)
-            diff_radiuses= self.dataset.radiuses+ self.radius-d
+            diff_radiuses= self.dataset.radiuses+ rc-d
             new_radiuses= self.dataset.radiuses-0.5*diff_radiuses
             mask= (diff_radiuses>0)* (self.dataset.y[c_id]!= self.dataset.y[self.dataset.queries])
 
@@ -412,9 +420,9 @@ class ProbCoverSampler(ActiveLearner):
                     # Recover incoming edges to those points
                     recover_edges_of= no_longer_covered_vertices[covered_by_others==0]
                     graph[:,recover_edges_of]= self.graph[:, recover_edges_of]
-            print(self.dataset.radiuses[mask], new_radiuses[mask])
+            # print(self.dataset.radiuses[mask], new_radiuses[mask])
             self.dataset.radiuses[mask]= new_radiuses[mask]
-            print(f"Changed radiuses {np.where(mask==1)} with new radiuses {new_radiuses[mask]}")
+            # print(f"Changed radiuses {np.where(mask==1)} with new radiuses {new_radiuses[mask]}")
             if mask.any():
                 rc= rc-0.5*np.max(diff_radiuses[mask])
             # Change the points that are considered as covered in the graph
