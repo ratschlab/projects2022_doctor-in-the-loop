@@ -1,4 +1,4 @@
-from datasets import MixedClusters
+from datasets import MixedClusters, PointClouds
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -10,17 +10,16 @@ from copy import deepcopy
 from activelearners import ProbCoverSampler
 
 
-
 cluster_centers= np.array([[0,0]])
 cluster_std= [0.3]
 cluster_samples= np.array([400])
 dataset= MixedClusters(3, cluster_centers, cluster_std, cluster_samples, random_state=1)
-
-clustering= MyKMeans(dataset, 3)
+# dataset= PointClouds([[1,2], [2,3]], [0.5, 0.8], np.array([100,200]), random_state=1)
+dataset.plot_dataset()
+clustering= MyKMeans(dataset, 2)
 learner= ProbCoverSampler(dataset, 0.95, clustering)
 learner.update_radius(0.3)
-
-learner.adaptive_query(5)
+learner.adaptive_query(25, K=5)
 dataset.plot_al(plot_circles=True)
 
 

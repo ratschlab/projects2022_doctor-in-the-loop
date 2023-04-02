@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from helper import check_cover
 from helper import get_purity_faiss, get_radius_faiss, get_nn_faiss, adjacency_graph_faiss, get_covered_points
 from models import Classifier1NN
-from helper import get_nearest_neighbour
+from helper import get_nearest_neighbour, update_adjacency_graph_labeled
 from sklearn.neighbors import NearestNeighbors
 
 
@@ -324,20 +324,23 @@ class ProbCoverSampler(ActiveLearner):
         if plot_clustering:
             self.clustering.plot()
 
-
         self.purity_threshold= purity_threshold
         # Get radius for given purity threshold
         self.radius = get_radius(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range, search_step,
                                                   plot_unpure_balls)
         print(f"ProbCover Sampler initialized for threshold {self.purity_threshold} with radius {round(self.radius, 2)}")
 
+        #TODO: I ADDED THIS
+        self.dataset.radiuses= np.repeat(self.radius, len(self.dataset.x))
         # Initialize the graph
-        self.graph = adjacency_graph(self.dataset.x, self.radius)
+        self.graph = adjacency_graph(self.dataset.x, self.dataset.radiuses)
         self.adaptive=adaptive
 
     def update_radius(self, new_radius):
         self.radius= new_radius
-        self.graph= adjacency_graph(self.dataset.x, new_radius)
+        #TODO: I added this
+        self.dataset.radiuses= np.repeat(self.radius, len(self.dataset.x))
+        self.graph= adjacency_graph(self.dataset.x, self.dataset.radiuses)
         print(f"Updated ProbCover Sampler radius: {round(self.radius, 2)}")
 
     def update_labeled(self, plot_clustering=False):
@@ -357,11 +360,7 @@ class ProbCoverSampler(ActiveLearner):
         # Initialize the labels
         n_pool = self.dataset.n_points
 
-        # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
-        # if np.sum(self.dataset.labeled) >= 1:
-        #     covered_edges = graph[self.dataset.queries, :]
-        #     covered_vertices = np.where(np.max(covered_edges, axis=0) == 1)[0]
-        #     graph[:, covered_vertices] = 0
+        graph= update_adjacency_graph_labeled(self.dataset)
 
         for m in range(M):
             # get the unlabeled point with highest out-degree
@@ -380,56 +379,41 @@ class ProbCoverSampler(ActiveLearner):
         n_pool = self.dataset.n_points
 
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
-        for i, id in enumerate(self.dataset.queries):
-            covered_vertices= np.where(get_covered_points(self.dataset, self.dataset.radiuses[i], id)==1)[0]
-            graph[:, covered_vertices] = 0
+        graph= update_adjacency_graph_labeled(self.dataset)
 
         for m in range(M):
             print(f"querying point {len(self.dataset.queries)+1}")
+            if len(self.dataset.queries)>K:
+                # set radius of all unlabeled points using average radius ok K-nn neighbours and update the covered points accordingly
+                for i in np.where(self.dataset.labeled == 0)[0]:
+                    # get K nearest neighbours of i
+                    nbrs = NearestNeighbors(n_neighbors=K).fit(self.dataset.x[self.dataset.queries])
+                    distances, indices = nbrs.kneighbors(self.dataset.x[i].reshape(1, -1))
+                    # set its radius as a weighted radius of its K-nn
+                    weights= np.squeeze((1/distances)/((1/distances).sum()))
+                    self.dataset.radiuses[i]= (weights*self.dataset.radiuses[indices[0]]).sum()
+                    graph= update_adjacency_graph_labeled(self.dataset)
             # get the unlabeled point with highest out-degree
-
             out_degrees = np.sum(graph, axis=1)
             max_out_degree = np.argmax(out_degrees[self.dataset.labeled == 0])
             c_id = np.arange(n_pool)[self.dataset.labeled == 0][max_out_degree]
             assert ((out_degrees[c_id] == np.max(out_degrees[self.dataset.labeled == 0])) & (self.dataset.labeled[c_id] == 0))
+            rc= self.dataset.radiuses[c_id]
+
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
-            if len(self.dataset.queries)>=K:
-                nbrs = NearestNeighbors(n_neighbors=K).fit(self.dataset.x[self.dataset.queries])
-                distances, indices = nbrs.kneighbors(self.dataset.x[c_id].reshape(1,-1))
-                nearest_radiuses_indices= indices[0]
-                print(nearest_radiuses_indices, self.dataset.queries, indices)
-                rc= np.mean(self.dataset.radiuses[nearest_radiuses_indices])
-                print(rc)
-            else:
-                rc= self.radius
-            d = np.linalg.norm(self.dataset.x[c_id, :] - self.dataset.x[self.dataset.queries, :], axis=1)
-            diff_radiuses= self.dataset.radiuses+ rc-d
-            new_radiuses= self.dataset.radiuses-0.5*diff_radiuses
-            mask= (diff_radiuses>0)* (self.dataset.y[c_id]!= self.dataset.y[self.dataset.queries])
-
-            for i in np.where(mask==1)[0]:
-                # 1) Get the points that used to be covered but are no longer due to the change in radiuses
-                new_covered_vertices= np.where(get_covered_points(self.dataset, new_radiuses[i], self.dataset.queries[i])==1)[0]
-                old_covered_vertices= np.where(get_covered_points(self.dataset, self.dataset.radiuses[i], self.dataset.queries[i])==1)[0]
-                no_longer_covered_vertices= old_covered_vertices[np.isin(old_covered_vertices, new_covered_vertices)==0]
-
-                # 2) Recover incoming edges to those points (by comparing to the original graph)
-                # Check that they are not still covered by other points in the queries
-                if len(no_longer_covered_vertices)>0 and len(self.dataset.queries)>2:
-                    covered_by_others= np.max(graph[self.dataset.queries[self.dataset.queries!=self.dataset.queries[i]].reshape(-1,1), no_longer_covered_vertices.reshape(1,-1)], axis=0)
-                    # Recover incoming edges to those points
-                    recover_edges_of= no_longer_covered_vertices[covered_by_others==0]
-                    graph[:,recover_edges_of]= self.graph[:, recover_edges_of]
-            # print(self.dataset.radiuses[mask], new_radiuses[mask])
-            self.dataset.radiuses[mask]= new_radiuses[mask]
-            # print(f"Changed radiuses {np.where(mask==1)} with new radiuses {new_radiuses[mask]}")
-            if mask.any():
-                rc= rc-0.5*np.max(diff_radiuses[mask])
-            # Change the points that are considered as covered in the graph
-            covered_vertices = get_covered_points(self.dataset, rc, c_id)
-            graph[:, covered_vertices] = 0
+            if len(self.dataset.queries)>0:
+                d = np.linalg.norm(self.dataset.x[c_id, :] - self.dataset.x[self.dataset.queries, :], axis=1)
+                diff_radiuses, new_radiuses= np.zeros(shape= self.dataset.radiuses.shape), np.zeros(shape= self.dataset.radiuses.shape)
+                diff_radiuses[self.dataset.queries]= self.dataset.radiuses[self.dataset.queries]+rc-d
+                new_radiuses[self.dataset.queries]= np.maximum(0, 0.5*(self.dataset.radiuses[self.dataset.queries]-rc+d))
+                mask= (diff_radiuses>0)* (self.dataset.y[c_id]!= self.dataset.y)*(self.dataset.labeled==1)
+                self.dataset.radiuses[mask]= new_radiuses[mask]
+                if mask.any():
+                    rc= rc-0.5*np.max(diff_radiuses[mask])
+                # Change the points that are considered as covered in the graph
             self.dataset.observe(c_id, rc)
             print(self.dataset.radiuses)
+            graph = update_adjacency_graph_labeled(self.dataset)
 
 
 # old helper functions
@@ -467,32 +451,17 @@ def get_purity(x, pseudo_labels, nn_idx, delta, plot_unpure_balls=False):
 
 def get_radius(alpha: float, x: np.array, pseudo_labels,
                          search_range=[0.5, 3.5], search_step=0.05, plot_unpure_balls=False):
-    """
-    Args:
-        x: np.array
-        k: number of classes in the data
-        graph: adjacency matrix with 0 diagonals, an edge for points in the B-delta ball
-        alpha: purity threshold
-    Returns:
-        purity_radius: min{r: purity(r)>=alpha}
-    """
+
 
     # Get the indices of the 1 nearest neighbours for each point
     nn_idx = get_nearest_neighbour(x)
-    # Purity of each point
-
     radiuses = np.arange(search_range[0], search_range[1], search_step)
 
     while len(radiuses)>1:
         id = int(len(radiuses) / 2)
         purity= get_purity(x, pseudo_labels, nn_idx, radiuses[id])
-
-        if purity>=alpha:
-            radiuses=radiuses[id:]
-        else:
-            radiuses=radiuses[:id]
+        radiuses= radiuses[id:] if purity>= alpha else radiuses[:id]
     purity_radius = radiuses[0]
-
     if plot_unpure_balls:
         get_purity(x, pseudo_labels, nn_idx, purity_radius, True)
 

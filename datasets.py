@@ -20,34 +20,26 @@ class ActiveDataset:
 
         self.labeled = np.zeros(self.n_points, dtype=int)
         self.queries = np.array([], dtype= int)
-        self.radiuses= np.array([])
+        self.radiuses = np.zeros(self.n_points)
 
 
     def restart(self):
         self.labeled = np.zeros(self.n_points, dtype=int)
         self.queries = np.array([], dtype=int)
-        self.radiuses= np.array([], dtype=int)
+        self.radiuses = np.zeros(self.n_points)
 
-    def observe(self, idx, radius= None):
+    def observe(self, idx, radiuses=None):
         self.labeled[idx] = 1
+        self.radiuses[idx]= radiuses
         if isinstance(idx, int):
             idx = np.array([idx])
         elif idx.ndim == 0:
             idx = np.array([idx])
-
-        if isinstance(radius, float):
-            radius = np.array([radius])
-        elif radius.ndim == 0:
-            radius = np.array([radius])
-
         self.queries = np.concatenate((self.queries, idx), axis=0).astype(int)
-        if radius is not None:
-            self.radiuses = np.concatenate((self.radiuses, radius), axis=0)
+
 
     def plot_dataset(self):
-        #Check that the data is 2-dimensional
         assert(self.x.shape[1]==2)
-
         fig, ax = plt.subplots()
         ax.axis('equal')
         sns.scatterplot(x= self.x[:,0], y=self.x[:,1], hue=self.y, palette="Set2")
@@ -63,7 +55,7 @@ class ActiveDataset:
         sns.scatterplot(x=self.x[self.queries, 0], y=self.x[self.queries, 1], color= "red", marker="P", s=150)
         if plot_circles:
             for i, u in enumerate(self.queries):
-                ax.add_patch(plt.Circle((self.x[u, 0], self.x[u, 1]), self.radiuses[i], color='red', fill=False, alpha=0.5))
+                ax.add_patch(plt.Circle((self.x[u, 0], self.x[u, 1]), self.radiuses[u], color='red', fill=False, alpha=0.5))
         plt.show()
 
 
@@ -87,12 +79,12 @@ class PointClouds(ActiveDataset):
 
 
 class CenteredCircles(ActiveDataset):
-    def __init__(self, center, radiuses, samples, std, random_state=None):
-        assert (len(radiuses) == len(samples))
+    def __init__(self, center, circle_radiuses, samples, std, random_state=None):
+        assert (len(circle_radiuses) == len(samples))
         self.n_features = 2
-        self.n_cluster = len(radiuses)
+        self.n_cluster = len(circle_radiuses)
         self.center = center
-        self.radiuses = radiuses
+        self.r = circle_radiuses
         self.samples = samples
         self.std = std
         super(CenteredCircles, self).__init__(np.sum(samples), random_state)
@@ -100,10 +92,10 @@ class CenteredCircles(ActiveDataset):
 
     def generate_data(self):
         x1, x2, y= np.array([]), np.array([]), np.array([])
-        for k in range(len(self.radiuses)):
+        for k in range(len(self.r)):
             theta = np.linspace(0,2*np.pi, self.samples[k])
-            x1= np.append(x1, np.cos(theta)*self.radiuses[k]+self.center[0]+self.std[k]*np.random.normal(loc=0.0, scale=1.0, size=self.samples[k])).reshape(-1,1)
-            x2= np.append(x2, np.sin(theta)*self.radiuses[k]+self.center[1]+self.std[k]*np.random.normal(loc=0.0, scale=1.0, size=self.samples[k])).reshape(-1,1)
+            x1= np.append(x1, np.cos(theta)*self.r[k]+self.center[0]+self.std[k]*np.random.normal(loc=0.0, scale=1.0, size=self.samples[k])).reshape(-1,1)
+            x2= np.append(x2, np.sin(theta)*self.r[k]+self.center[1]+self.std[k]*np.random.normal(loc=0.0, scale=1.0, size=self.samples[k])).reshape(-1,1)
             y= np.append(y, np.ones(self.samples[k])*k)
         x= np.concatenate((x1,x2), axis=1)
         return x,y

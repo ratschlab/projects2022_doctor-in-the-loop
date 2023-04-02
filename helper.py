@@ -9,16 +9,29 @@ import faiss
 from sklearn.metrics import confusion_matrix
 from scipy.optimize import linear_sum_assignment as linear_assignment
 
-def adjacency_graph(x: np.array, radius: float):
+def adjacency_graph(x: np.array, radiuses):
     n_vertices = len(x)
+    if isinstance(radiuses, float) or radiuses.ndim == 0:
+        radiuses= np.repeat(radiuses, repeats= len(x))
     graph = np.zeros(shape=(n_vertices, n_vertices))
     for u in range(n_vertices):
-        graph[u,u]=1
-        for v in range(u):
-            if np.linalg.norm(x[u,:]-x[v,:]) < radius:
-                graph[u, v] = 1
-                graph[v, u] = 1
+        covered_u= (np.linalg.norm(x[u,:]- x[np.arange(n_vertices),:], axis=1)< radiuses[u])
+        graph[u, covered_u]=1
     return graph
+
+def update_adjacency_graph_labeled(dataset):
+    n_vertices = len(dataset.x)
+    graph = np.zeros(shape=(n_vertices, n_vertices))
+    # Update all points covered by u with radius ru
+    for u in range(n_vertices):
+        covered_u= (np.linalg.norm(dataset.x[u,:]- dataset.x[np.arange(n_vertices),:], axis=1)< dataset.radiuses[u])
+        graph[u, covered_u]=1
+    # Remove all incoming edges of all points covered by labeled points
+    if len(dataset.queries)>0:
+        all_covered= np.where(np.max(graph[dataset.queries,:], axis=0)==1)[0]
+        graph[:,all_covered]=0
+    return graph
+
 
 def adjacency_graph_faiss(x: np.array, radius:float):
     n_features= x.shape[1]
@@ -174,6 +187,16 @@ def get_covered_points(dataset, radius, id):
     distances= np.linalg.norm(dataset.x[id,:]- dataset.x[np.arange(n_vertices), :], axis=1)
     covered= (distances<= radius)
     return covered
+
+def get_all_covered_points(dataset):
+    n_vertices= len(dataset.x)
+    all_covered= np.array([], dtype=int)
+    for i, id in enumerate(dataset.queries):
+        distances = np.linalg.norm(dataset.x[id, :] - dataset.x[np.arange(n_vertices), :], axis=1)
+        covered= np.where(distances<= dataset.radiuses[i])[0]
+        all_covered = np.concatenate((all_covered, covered), axis=0).astype(int)
+    return np.unique(all_covered)
+
 
 
 
