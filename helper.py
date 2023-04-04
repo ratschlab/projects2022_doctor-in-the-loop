@@ -33,12 +33,65 @@ def update_adjacency_graph_labeled(dataset):
     return graph
 
 
-def adjacency_graph_faiss(x: np.array, radius:float):
+def adjacency_graph_faiss(x: np.array, initial_radius:float):
     n_features= x.shape[1]
     index = faiss.IndexFlatL2(n_features)  # build the index
     index.add(x.astype('float32'))
-    lims, D, I = index.range_search(x.astype('float32'), radius**2) # because faiss uses squared L2 error
+    lims, D, I = index.range_search(x.astype('float32'), initial_radius**2) # because faiss uses squared L2 error
     return lims, D, I
+
+
+def update_adjacency_radius_faiss(dataset, new_radiuses, lims, D, I):
+    n_vertices= len(dataset.x)
+    #replace lims, D, I using the new radiuses
+    for u in np.where(dataset.radiuses!=new_radiuses):
+        new_distances= np.linalg.norm(dataset.x[u, :] - dataset.x[np.arange(n_vertices), :], axis=1)
+        old_covered_points= I[lims[u]:lims[u+1]]
+        new_covered_points= np.where(new_distances < new_radiuses[u])[0]  # indices are already sorted
+        new_distances= new_distances[new_covered_points]
+        length_diff= lims[u+1]- lims[u]- len(new_covered_points)
+
+        #update the neighbours and distances
+        I= np.concatenate((I[:lims[u]], new_covered_points, I[lims[u+1]:]), axis=0)
+        D= np.concatenate((D[:lims[u]], new_distances, D[lims[u+1]:]), axis=0)
+        # update the indices
+        lims[u + 1:] = lims[u + 1:] - length_diff
+
+        # if the points whose radius we're changing was labeled, we also need to remove/recover incoming edges
+        if (new_radiuses[u]>dataset.radiuses[u])&(dataset.labeled[u]==1):
+            # remove all incoming edges of the newly covered points
+            for v in new_covered_points[np.invert(np.isin(new_covered_points, old_covered_points))]:
+                # find points covered by v
+                covered_by_v= I[lims[v]:lims[v+1]]
+                # remove them from the list of neighbours I and update lims, D accordingly
+                covered_by_v_I_bool= np.isin(I,covered_by_v)
+                covered_by_v_I_id= np.where(covered_by_v_I_bool)[0]
+                # n_covered = np.zeros(len(lims))
+                # for l in range(1, len(lims)):
+                #     n_covered[l] = np.sum(lims[l - 1] <= covered_by_v_I_id < lims[l])
+                n_covered= np.array([np.sum(lims[l - 1] <= covered_by_v_I_id < lims[l]) for l in range(1, len(lims))])
+                lims = lims - np.cumsum(n_covered)
+                lims = lims.astype(int)
+                I= I[np.invert(covered_by_v_I_bool)]
+                D= D[np.invert(covered_by_v_I_bool)]
+
+        elif (new_radiuses[u]< dataset.radiuses[u])&(dataset.labeled[u]==1):
+            # need to recover incoming edges of points that are not covered anymore (if they are not covered by other labeled points!!)
+            for v in old_covered_points[np.invert(np.isin(old_covered_points, new_covered_points))]:
+                # get all points that have an edge going to v and add v back to their list of neighbours
+                incoming_edge_vertices_v_distances= np.linalg.norm(dataset.x[v, :] - dataset.x[np.arange(n_vertices), :], axis=1)
+                incoming_edge_vertices_v_bool= (incoming_edge_vertices_v_distances<new_radiuses[v])
+                incoming_edge_vertices_v_id= np.where(incoming_edge_vertices_v_bool)[0]
+                for l in incoming_edge_vertices_v_id:
+                    # recover only if incoming_edge_vertices_v_id is not covered by a labeled point
+                    covered_by_other_labeled= np.max(np.linalg.norm(dataset.x[l, :] - dataset.x[dataset.queries[dataset.queries!=u], :], axis=1)<dataset.radiuses[dataset.queries])
+                    if not covered_by_other_labeled:
+                        I= np.insert(I, lims[l+1], v)
+                        D= np.insert(D, lims[l+1], incoming_edge_vertices_v_distances[l])
+                        lims[l+1:]= lims[l+1:]+1
+    dataset.radiuses= new_radiuses
+    return lims, D, I
+
 
 def weighted_graph(dataset: pd.DataFrame, kernel_fn, kernel_hyperparam, sampled_labels=None):
     n_vertices = len(dataset.x)
