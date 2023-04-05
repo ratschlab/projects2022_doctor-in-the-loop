@@ -6,10 +6,11 @@ from sklearn.cluster import KMeans
 import seaborn as sns
 import matplotlib.pyplot as plt
 from helper import check_cover
-from helper import get_purity_faiss, get_radius_faiss, get_nn_faiss, adjacency_graph_faiss, get_covered_points
+from helper import get_purity_faiss, get_radius_faiss, get_nn_faiss, adjacency_graph_faiss, get_covered_points, update_adjacency_radius_faiss
 from models import Classifier1NN
 from helper import get_nearest_neighbour, update_adjacency_graph_labeled
 from sklearn.neighbors import NearestNeighbors
+import faiss
 
 
 
@@ -167,12 +168,12 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         print(f"ProbCover Sampler initialized for threshold {self.purity_threshold} with radius {self.radius}")
 
         # Initialize the graph
-        self.lims, _, self.I = adjacency_graph_faiss(self.dataset.x, self.radius)
+        self.lims, self.D, self.I = adjacency_graph_faiss(self.dataset.x, self.radius)
         self.adaptive= adaptive
 
     def update_radius(self, new_radius):
         self.radius= new_radius
-        self.lims, _, self.I = adjacency_graph_faiss(self.dataset.x, self.radius)
+        self.lims, self.D, self.I = adjacency_graph_faiss(self.dataset.x, self.radius)
         print(f"Updated ProbCover Sampler radius: {self.radius}")
 
     def update_labeled(self, plot_clustering=False):
@@ -181,13 +182,13 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.clustering.fit_labeled(self.dataset.queries)
         self.pseudo_labels= self.clustering.pseudo_labels
         self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, [0,10], 0.01)
-        self.lims, _, self.I= adjacency_graph_faiss(self.dataset.x, self.radius)
+        self.lims, self.D, self.I= adjacency_graph_faiss(self.dataset.x, self.radius)
         print(f"Updated ProbCover Sampler using the new acquired labels, new radius: {self.radius}")
         if plot_clustering:
             self.clustering.plot()
 
     def query(self, M, B=1, n_initial=1):
-        lims, I = self.lims.copy(), self.I.copy()
+        lims, I, D = self.lims.copy(), self.I.copy()
         # Initialize the labels
         n_pool = self.dataset.n_points
 
@@ -230,8 +231,64 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             I = np.delete(I, I_covered_idx)
             self.dataset.observe(c_id, self.radius)
 
+    def adaptive_query(self, M, K=3, B=1, n_initial=1):
+        lims, I, D = self.lims.copy(), self.I.copy(), self.D.copy()
+        print("initially", lims.shape, I.shape, D.shape)
+        print(self.lims.shape, self.I.shape, self.D.shape)
+        # Initialize the labels
+        n_pool = self.dataset.n_points
 
+        # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
+        if len(self.dataset.queries)>0:
+            for l in self.dataset.queries:
+                covered_by_l= I[lims[l]:lims[l+1]]
+                # remove them from the list of neighbours I and update lims, D accordingly
+                covered_by_l_I_bool = np.isin(I, covered_by_l)
+                covered_by_l_I_id = np.where(covered_by_l_I_bool)[0]
+                n_covered = np.array([np.sum((lims[l - 1] <= covered_by_l_I_id) &(covered_by_l_I_id< lims[l])) for l in range(1, len(lims))])
+                lims = lims - np.cumsum(np.concatenate((np.array([0]),n_covered), axis=0))
+                lims = lims.astype(int)
+                I = I[np.invert(covered_by_l_I_bool)]
+                D = D[np.invert(covered_by_l_I_bool)]
 
+        for m in range(M):
+            print(f"querying point {len(self.dataset.queries)+1}")
+
+            # Update initial radiuses using k-means
+            if len(self.dataset.queries)>0:
+                index_knn = faiss.IndexFlatL2(2)  # build the index
+                index_knn.add(self.dataset.x[self.dataset.queries].astype("float32"))  # fit it to the labeled data
+                n_neighbours= K if len(self.dataset.queries)>=K else len(self.dataset.queries)
+                D_neighbours, I_neighbours = index_knn.search(self.dataset.x.astype("float32"), n_neighbours)  # find K-nn for all
+                # set new radiuses as a weighted radius of the labeled K-nn (for all non labeled points)
+                D_neighbours= np.sqrt(D_neighbours) # because faiss always works with squared Euclidean distance
+                weights= D_neighbours/(D_neighbours.sum(axis=1).reshape(-1,1))
+                new_radiuses= (weights*self.dataset.radiuses[self.dataset.queries[I_neighbours]]).sum(axis=1)
+                new_radiuses[self.dataset.labeled]= self.dataset.radiuses[self.dataset.labeled] # insure radius of labeled points are not changed by the kmeans averaging
+                lims, D, I= update_adjacency_radius_faiss(self.dataset, new_radiuses, lims, D, I)
+                print("after kmeans update", D.shape,I.shape)
+            # get the unlabeled point with highest out-degree
+            out_degrees = lims[1:] - lims[:-1]
+            max_out_degree = np.argmax(out_degrees[self.dataset.labeled == 0])
+            c_id = np.arange(n_pool)[self.dataset.labeled == 0][max_out_degree]
+            assert ((out_degrees[c_id] == np.max(out_degrees)) & (self.dataset.labeled[c_id] == 0))
+            rc= self.dataset.radiuses[c_id]
+
+            if len(self.dataset.queries)>0:
+                d = np.linalg.norm(self.dataset.x[c_id, :] - self.dataset.x[self.dataset.queries, :], axis=1)
+                diff_radiuses, new_radiuses= np.zeros(shape= self.dataset.radiuses.shape), np.zeros(shape= self.dataset.radiuses.shape)
+                diff_radiuses[self.dataset.queries]= self.dataset.radiuses[self.dataset.queries]+rc-d
+                new_radiuses[self.dataset.queries]= np.maximum(0, 0.5*(self.dataset.radiuses[self.dataset.queries]-rc+d))
+                mask= (diff_radiuses>0)* (self.dataset.y[c_id]!= self.dataset.y)*(self.dataset.labeled==1)
+                new_radiuses[np.invert(mask)]= self.dataset.radiuses[np.invert(mask)] # insure the radius remains unchanged for other points
+                if mask.any():
+                    new_radiuses[c_id]=rc-0.5*np.max(diff_radiuses[mask])
+                # Change the points that are considered as covered in the graph
+            else:
+                new_radiuses= self.dataset.radiuses
+            self.dataset.observe(c_id, rc)
+            # Update for changed radiuses and new observed point
+            lims, D, I = update_adjacency_radius_faiss(self.dataset, new_radiuses, lims, D, I)
 
 
 def active_learning_algo(dataset, clustering, M, B, initial_purity_threshold, p_cover=1):
@@ -383,16 +440,16 @@ class ProbCoverSampler(ActiveLearner):
 
         for m in range(M):
             print(f"querying point {len(self.dataset.queries)+1}")
-            if len(self.dataset.queries)>K:
-                # set radius of all unlabeled points using average radius ok K-nn neighbours and update the covered points accordingly
-                for i in np.where(self.dataset.labeled == 0)[0]:
-                    # get K nearest neighbours of i
-                    nbrs = NearestNeighbors(n_neighbors=K).fit(self.dataset.x[self.dataset.queries])
-                    distances, indices = nbrs.kneighbors(self.dataset.x[i].reshape(1, -1))
-                    # set its radius as a weighted radius of its K-nn
-                    weights= np.squeeze((1/distances)/((1/distances).sum()))
-                    self.dataset.radiuses[i]= (weights*self.dataset.radiuses[indices[0]]).sum()
-                    graph= update_adjacency_graph_labeled(self.dataset)
+            if len(self.dataset.queries)>0:
+                n_neighbours = K if len(self.dataset.queries) >= K else len(self.dataset.queries)
+                nbrs = NearestNeighbors(n_neighbors=n_neighbours).fit(self.dataset.x[self.dataset.queries])
+                distances, indices = nbrs.kneighbors(self.dataset.x[self.dataset.labeled==0])
+                # set its radius as a weighted radius of its K-nn
+                weights= 1/distances
+                weights= weights/(weights.sum(axis=1).reshape(len(weights), -1))
+                new_radiuses= (weights*self.dataset.radiuses[self.dataset.queries[indices]]).sum(axis=1)
+                self.dataset.radiuses[self.dataset.labeled==0]= new_radiuses
+                graph= update_adjacency_graph_labeled(self.dataset)
             # get the unlabeled point with highest out-degree
             out_degrees = np.sum(graph, axis=1)
             max_out_degree = np.argmax(out_degrees[self.dataset.labeled == 0])
@@ -412,7 +469,6 @@ class ProbCoverSampler(ActiveLearner):
                     rc= rc-0.5*np.max(diff_radiuses[mask])
                 # Change the points that are considered as covered in the graph
             self.dataset.observe(c_id, rc)
-            print(self.dataset.radiuses)
             graph = update_adjacency_graph_labeled(self.dataset)
 
 
