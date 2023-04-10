@@ -35,6 +35,7 @@ class ActiveDataset:
             idx = np.array([idx])
         elif idx.ndim == 0:
             idx = np.array([idx])
+        print(f"Observed points {idx} with radius(es) {radiuses}")
         self.queries = np.concatenate((self.queries, idx), axis=0).astype(int)
 
 
