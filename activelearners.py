@@ -6,8 +6,9 @@ import seaborn as sns
 from clustering import ClusteringAlgo
 from helper import get_radius_faiss, adjacency_graph_faiss, remove_incoming_edges_faiss, update_adjacency_radius_faiss, \
     reduce_intersected_balls_faiss
-
-
+from sklearn.cluster import KMeans
+from metrics import kl_divergence
+from IPython import embed
 class ActiveLearner:
     def __init__(self, dataset, model=None):
         self.dataset = dataset
@@ -181,3 +182,59 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
             self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
                                                                        self.I_ref, self.lims, self.D, self.I)
+
+
+class BALDSampler(ActiveLearner):
+    def __init__(self, dataset, n_classes, model=None):
+
+        super().__init__(dataset, model)
+        self.name = "BALD Sampler"
+        self.n_classes= n_classes
+    def query(self, M, K=5, B=1, n_initial=1):
+
+        assert((M>=self.n_classes)or(len(self.dataset.queries)>0))
+        m=M
+        while m>0:
+            if len(self.dataset.queries) == 0:
+                # cluster the data into self.n_classes clusters and query points closest to each centroid
+                # hope to discover all classes that way
+                self.random_seed_init=1
+                kmeans = KMeans(n_clusters=self.n_classes, random_state=self.random_seed_init).fit(self.dataset.x)
+                index_kmeans= faiss.IndexFlatL2(2)
+                index_kmeans.add(self.dataset.x.astype("float32"))
+                _, I_centroids = index_kmeans.search(kmeans.cluster_centers_.astype("float32"), 1)
+                self.dataset.observe(I_centroids.squeeze())
+                m=m-self.n_classes
+
+            elif len(self.dataset.queries)>0:
+                # Compute predicted probabilities as distance to each of the classes: does not treat the case where not all classes were discovered yet in the selection of the initial pool
+                if len(np.unique(self.dataset.y[self.dataset.queries]))==self.n_classes:
+                    P= np.zeros(shape=(self.dataset.n_points,self.n_classes))
+                    # set all discovered points predicted probabilities as deterministic
+                    P[self.dataset.queries,self.dataset.y[self.dataset.queries]]= 1
+                    # for all other points calculate the distance to each class
+                    for c in range(self.n_classes):
+                        index_to_c= faiss.IndexFlatL2(2)
+                        idx_in_c= self.dataset.queries[self.dataset.y[self.dataset.queries]==c]
+                        index_to_c.add(self.dataset.x[idx_in_c].astype("float32"))
+                        D_to_c, _ = index_to_c.search(self.dataset.x[self.dataset.labeled==0].astype("float32"), 1)
+                        P[self.dataset.labeled==0, c]= 1/np.sqrt(D_to_c.squeeze())
+                    # Normalize to get a distribution
+                    P= P/P.sum(axis=1).reshape(-1,1)
+
+                    #Compute score as the mean Kl_divergence between itself and its K-nn
+                    index_knn = faiss.IndexFlatL2(2)  # build the index
+                    index_knn.add(self.dataset.x[self.dataset.queries].astype("float32"))  # fit it to the labeled data
+                    n_neighbours = K if len(self.dataset.queries) >= K else len(self.dataset.queries)
+                    _, I_neighbours = index_knn.search(self.dataset.x.astype("float32"), n_neighbours)  # find K-nn for all
+
+                    scores=np.array([kl_divergence(P[self.dataset.queries[I_neighbours[p].squeeze()],:], P[p,:].reshape(1,-1)).mean() for p in np.where(self.dataset.labeled==0)[0]])
+                    scores[self.dataset.queries]=0
+
+                    #Query 106 and 545 for comparaison is in the middle for comparaison of the kl_divergence
+                    if np.max(scores)>0:
+                        c_id= np.argmax(scores)
+                    else:
+                        c_id= np.random.choice(np.where(self.dataset.labeled==0)[0], size=1)
+                    self.dataset.observe(c_id)
+                    m= m-1

@@ -1,11 +1,12 @@
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
 
-from activelearners import ProbCoverSampler_Faiss
+from activelearners import ProbCoverSampler_Faiss, BALDSampler
 from clustering import MyKMeans
 from datasets import PointClouds
-
+from IPython import embed
 if __name__ == "__main__":
+
     cluster_centers = np.array([[0, 0]])
 
     cluster_std = [0.3]
@@ -16,6 +17,14 @@ if __name__ == "__main__":
     test_dataset = PointClouds([[1, 2], [2, 3], [0.75, 3.25]], [0.38, 0.4, 0.4], np.array([50, 50, 50]), random_state=2)
 
     dataset.plot_dataset()
+
+    sampler= BALDSampler(dataset, 3)
+    sampler.query(3)
+    for _ in range(10):
+        sampler.query(1)
+        dataset.plot_al()
+    embed()
+
     clustering = MyKMeans(dataset, 3)
     learner = ProbCoverSampler_Faiss(dataset, 0.95, clustering)
     learner.update_radius(0.3)
@@ -32,8 +41,6 @@ if __name__ == "__main__":
             perf = clf.score(x_test, y_test)
             scores.append(perf)
 
-        # print(scores)
-        # print(dataset.radiuses[dataset.queries])
 
     dataset.restart()
     learner = ProbCoverSampler_Faiss(dataset, 0.95, clustering)
