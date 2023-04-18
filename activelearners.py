@@ -231,7 +231,7 @@ class BALDSampler(ActiveLearner):
                     scores=np.array([kl_divergence(P[self.dataset.queries[I_neighbours[p].squeeze()],:], P[p,:].reshape(1,-1)).mean() for p in np.where(self.dataset.labeled==0)[0]])
                     scores[self.dataset.queries]=0
 
-                    #Query 106 and 545 for comparaison is in the middle for comparaison of the kl_divergence
+                    #(Look at Query 106 and 545 for example, to see why the sampler is not selecting at the margins)
                     if np.max(scores)>0:
                         c_id= np.argmax(scores)
                     else:
