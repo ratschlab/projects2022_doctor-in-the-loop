@@ -96,7 +96,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
         self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
         self.adaptive = adaptive
-        self.dataset.radiuses = np.repeat(self.radius, len(self.dataset.x))
 
     def update_radius(self, new_radius):
         self.radius = new_radius
@@ -156,36 +155,23 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                     self.dataset.x[self.dataset.labeled == 0].astype("float32"), n_neighbours)  # find K-nn for all
                 # set new radiuses as a weighted radius of the labeled K-nn (for all non labeled points)
                 # TODO: weigh this as inverse of distances but can cause issue, use yourself as a points, apply Gaussian kernel with (1:laplace, 2: gaussian, 8: flat )
+                gauss_distances = np.exp(-D_neighbours / 8)
+                alpha = 1 / 2
+                weights = gauss_distances / (gauss_distances.sum(axis=1).reshape(-1, 1))
+
                 new_radiuses = self.dataset.radiuses.copy()
-
-                gauss_distances = np.exp(-D_neighbours**8 / new_radiuses[self.dataset.labeled == 0].reshape(-1,1)**8)
-                use_self = True
-
-                if use_self:
-                    norm = (gauss_distances.sum(axis=1, keepdims=True) + 1)
-                    alpha = (1 / norm)[:, 0]
-                    weights = gauss_distances / norm
-                    # new_radiuses[self.dataset.labeled == 0] = (weights * self.dataset.radiuses[
-                    #     self.dataset.queries[I_neighbours]]).sum(axis=1) + alpha * self.dataset.radiuses[
-                    #                                               self.dataset.labeled == 0]
-                    new_radiuses[self.dataset.labeled == 0] = (weights * self.dataset.radiuses[
-                        self.dataset.queries[I_neighbours]]).sum(axis=1) + alpha * self.radius
-                else:
-                    alpha = 1 / 2
-                    weights = gauss_distances / (gauss_distances.sum(axis=1).reshape(-1, 1))
-
-                    # print("Checking the weights", weights.shape, weights.sum(axis=1))
-                    # print("Checking the new radiuses", new_radiuses.max(), new_radiuses.min())
-                    new_radiuses[self.dataset.labeled == 0] = alpha * (
-                            weights * self.dataset.radiuses[self.dataset.queries[I_neighbours]]).sum(axis=1) + (
-                                                                      1 - alpha) * self.dataset.radiuses[
-                                                                  self.dataset.labeled == 0]
-                #print(self.lims[-1], self.D.shape, self.I.shape)
+                # print("Checking the weights", weights.shape, weights.sum(axis=1))
+                # print("Checking the new radiuses", new_radiuses.max(), new_radiuses.min())
+                new_radiuses[self.dataset.labeled == 0] = alpha * (
+                        weights * self.dataset.radiuses[self.dataset.queries[I_neighbours]]).sum(axis=1) + (
+                                                                  1 - alpha) * self.dataset.radiuses[
+                                                              self.dataset.labeled == 0]
+                print(self.lims[-1], self.D.shape, self.I.shape)
 
                 self.lims, self.D, self.I = update_adjacency_radius_faiss(self.dataset, new_radiuses, self.lims_ref,
                                                                           self.D_ref, self.I_ref, self.lims, self.D,
                                                                           self.I)
-                #print(self.lims[-1], self.D.shape, self.I.shape)
+                print(self.lims[-1], self.D.shape, self.I.shape)
             # get the unlabeled point with highest out-degree
             out_degrees = self.lims[1:] - self.lims[:-1]
             if np.any(out_degrees > 0):

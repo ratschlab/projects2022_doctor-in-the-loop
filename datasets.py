@@ -80,36 +80,6 @@ class PointClouds(ActiveDataset):
         return x, y
 
 
-class FourWays(ActiveDataset):
-    def __init__(self, cluster_std, cluster_samples, random_state=None, separable=False):
-        self.n_cluster = 4
-        self.cluster_std = cluster_std
-        self.cluster_samples = cluster_samples.astype(int)
-        self.separable = separable
-
-        super(FourWays, self).__init__(np.sum(cluster_samples), random_state)
-        self.name = "Fourways"
-
-    def generate_data(self):
-        x, y = make_blobs(n_samples=self.cluster_samples, centers=np.array([[-1, -1], [-1, 1], [1, -1], [1, 1]]),
-                       cluster_std=self.cluster_std, n_features=2)
-
-        if self.separable:
-            sep_labels = []
-            for k in x:
-                if k[0] < 0 and k[1] < 0:
-                    sep_labels.append(0)
-                elif k[0] < 0 and k[1] > 0:
-                    sep_labels.append(1)
-                elif k[0] > 0 and k[1] < 0:
-                    sep_labels.append(2)
-                elif k[0] > 0 and k[1] > 0:
-                    sep_labels.append(3)
-            y = np.array(sep_labels)
-
-        return x, y
-
-
 class CenteredCircles(ActiveDataset):
     def __init__(self, center, circle_radiuses, samples, std, random_state=None):
         assert (len(circle_radiuses) == len(samples))
