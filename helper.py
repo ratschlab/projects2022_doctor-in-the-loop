@@ -1,136 +1,82 @@
-import pandas as pd
-from IPython import embed
-import numpy as np
-from sklearn.neighbors import NearestNeighbors
-import seaborn as sns
-import matplotlib.pyplot as plt
-from scipy.sparse.csgraph import shortest_path
 import faiss
-from sklearn.metrics import confusion_matrix
-from scipy.optimize import linear_sum_assignment as linear_assignment
-
-
-def adjacency_graph(x: np.array, radiuses):
-    n_vertices = len(x)
-    if isinstance(radiuses, float) or radiuses.ndim == 0:
-        radiuses = np.repeat(radiuses, repeats=len(x))
-    graph = np.zeros(shape=(n_vertices, n_vertices))
-    for u in range(n_vertices):
-        covered_u = (np.linalg.norm(x[u, :] - x[np.arange(n_vertices), :], axis=1) < radiuses[u])
-        graph[u, covered_u] = 1
-    return graph
-
-
-def update_adjacency_graph_labeled(dataset):
-    n_vertices = len(dataset.x)
-    graph = np.zeros(shape=(n_vertices, n_vertices))
-    # Update all points covered by u with radius ru
-    for u in range(n_vertices):
-        covered_u = (
-                    np.linalg.norm(dataset.x[u, :] - dataset.x[np.arange(n_vertices), :], axis=1) < dataset.radiuses[u])
-        graph[u, covered_u] = 1
-    # Remove all incoming edges of all points covered by labeled points
-    if len(dataset.queries) > 0:
-        all_covered = np.where(np.max(graph[dataset.queries, :], axis=0) == 1)[0]
-        graph[:, all_covered] = 0
-    return graph
-
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
 
 def adjacency_graph_faiss(x: np.array, initial_radius: float):
     n_features = x.shape[1]
     index = faiss.IndexFlatL2(n_features)  # build the index
     index.add(x.astype('float32'))
     lims, D, I = index.range_search(x.astype('float32'), initial_radius ** 2)  # because faiss uses squared L2 error
-    print("I and D should be the same!!", I.shape, D.shape)
     return lims, D, I
 
 
-def update_adjacency_radius_faiss(dataset, new_radiuses, lims, D, I):
-    n_vertices = len(dataset.x)
-    # replace lims, D, I using the new radiuses
+def remove_incoming_edges_faiss(dataset, lims, D, I, query_idx=None):
+    if len(dataset.queries) > 0:
+        if query_idx == None:
+            query_idx = dataset.queries
+        if isinstance(query_idx, np.int64):
+            query_idx = np.array([query_idx])
+        # Get all covered
+        covered = np.array([])
+        for u in query_idx:
+            # TODO: improve this
+            covered = np.concatenate((covered, I[lims[u]:lims[u + 1]]), axis=0)
+        covered = np.unique(covered)
+        I_covered_bool = np.isin(I, covered)
+        I_covered_idx = np.where(I_covered_bool)[0]
+        # Remove all incoming edges to the covered vertices
+        I_split = np.split(I_covered_bool, lims)[1:-1]
+        n_covered = np.array([I_split[u].sum() for u in range(len(dataset.x))], dtype=int)
+
+        lims[1:] = lims[1:] - np.cumsum(n_covered)
+        I = np.delete(I, I_covered_idx)
+        D = np.delete(D, I_covered_idx)
+    return lims, D, I
+
+
+def update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref, lims, D, I):
+    assert (len(dataset.radiuses) == len(new_radiuses))
+    assert (lims_ref[-1] == D_ref.shape[0] == I_ref.shape[0])
+    assert (lims[-1] == D.shape[0] == I.shape[0])
+
     if (dataset.radiuses != new_radiuses).any():
-        for u in np.where(dataset.radiuses != new_radiuses)[0]:
-            new_distances = np.linalg.norm(dataset.x[u, :] - dataset.x[np.arange(n_vertices), :], axis=1)
-            print(u, lims[u], lims[u + 1], I.shape)
-            old_covered_points = I[lims[u]:lims[u + 1]]
-            new_covered_points = np.where(new_distances < new_radiuses[u])[0]  # indices are already sorted
-            new_distances = new_distances[new_covered_points]
-            length_diff = lims[u + 1] - lims[u] - len(new_covered_points)
+        R = np.repeat(new_radiuses, repeats=(lims_ref[1:] - lims_ref[:-1]).astype(int))
+        mask = D_ref < R ** 2
+        I, D = I_ref[mask], D_ref[mask]
+        mask_split = np.split(mask, lims_ref)[1:-1]
+        not_covered = np.array([np.invert(mask_split[u]).sum() for u in range(len(dataset.x))], dtype=int)
+        lims[1:] = lims_ref[1:] - np.cumsum(not_covered)
+        lims, D, I = remove_incoming_edges_faiss(dataset, lims, D, I)
 
-            # update the neighbours and distances
-            I = np.concatenate((I[:lims[u]], new_covered_points, I[lims[u + 1]:]), axis=0)
-            D = np.concatenate((D[:lims[u]], new_distances, D[lims[u + 1]:]), axis=0)
-            # update the indices
-            lims[u + 1:] = lims[u + 1:] - length_diff
-
-            # if the points whose radius we're changing were labeled, we also need to remove/recover incoming edges
-            if (new_radiuses[u] > dataset.radiuses[u]) & (dataset.labeled[u] == 1):
-                # remove all incoming edges of the newly covered points
-                for v in new_covered_points[np.invert(np.isin(new_covered_points, old_covered_points))]:
-                    # find points covered by v
-                    covered_by_v = I[lims[v]:lims[v + 1]]
-                    # remove them from the list of neighbours I and update lims, D accordingly
-                    covered_by_v_I_bool = np.isin(I, covered_by_v)
-                    covered_by_v_I_id = np.where(covered_by_v_I_bool)[0]
-                    # n_covered = np.zeros(len(lims))
-                    # for l in range(1, len(lims)):
-                    #     n_covered[l] = np.sum(lims[l - 1] <= covered_by_v_I_id < lims[l])
-                    n_covered = np.array(
-                        [np.sum(lims[l - 1] <= covered_by_v_I_id < lims[l]) for l in range(1, len(lims))])
-                    lims = lims - np.cumsum(n_covered)
-                    lims = lims.astype(int)
-                    I = I[np.invert(covered_by_v_I_bool)]
-                    D = D[np.invert(covered_by_v_I_bool)]
-
-            elif (new_radiuses[u] < dataset.radiuses[u]) & (dataset.labeled[u] == 1):
-                # need to recover incoming edges of points that are not covered anymore (if they are not covered by other labeled points!!)
-                for v in old_covered_points[np.invert(np.isin(old_covered_points, new_covered_points))]:
-                    # get all points that have an edge going to v and add v back to their list of neighbours
-                    incoming_edge_vertices_v_distances = np.linalg.norm(
-                        dataset.x[v, :] - dataset.x[np.arange(n_vertices), :], axis=1)
-                    incoming_edge_vertices_v_bool = (incoming_edge_vertices_v_distances < new_radiuses[v])
-                    incoming_edge_vertices_v_id = np.where(incoming_edge_vertices_v_bool)[0]
-                    for l in incoming_edge_vertices_v_id:
-                        # recover only if incoming_edge_vertices_v_id is not covered by a labeled point
-                        covered_by_other_labeled = np.max(
-                            np.linalg.norm(dataset.x[l, :] - dataset.x[dataset.queries[dataset.queries != u], :],
-                                           axis=1) < dataset.radiuses[dataset.queries])
-                        if not covered_by_other_labeled:
-                            I = np.insert(I, lims[l + 1], v)
-                            D = np.insert(D, lims[l + 1], incoming_edge_vertices_v_distances[l])
-                            lims[l + 1:] = lims[l + 1:] + 1
-        dataset.radiuses = new_radiuses
+    dataset.radiuses = new_radiuses
     return lims, D, I
 
 
-def weighted_graph(dataset: pd.DataFrame, kernel_fn, kernel_hyperparam, sampled_labels=None):
-    n_vertices = len(dataset.x)
-    graph = np.zeros(shape=(n_vertices, n_vertices))
-    for u in range(n_vertices):
-        for v in range(u):
-            # if sampled_labels is not None:
-            if len(dataset.queries) >= 1:
-                if (u in dataset.queries) & (v in dataset.queries):
-                    if (dataset.y[u] == dataset.y[v]) & (u != v):
-                        graph[u, v] = 1000
-                        graph[v, u] = 1000
-                        # otherwise the weight is kept as zero
-                else:
-                    w = kernel_fn(dataset.x[u, :], dataset.x[v, :], kernel_hyperparam)
-                    graph[u, v] = w
-                    graph[v, u] = w
-            else:
-                w = kernel_fn(dataset.x[u, :], dataset.x[v, :], kernel_hyperparam)
-                graph[u, v] = w
-                graph[v, u] = w
-    return graph
+def reduce_intersected_balls_faiss(dataset, new_query_id, lims_ref, D_ref, I_ref, lims, D, I):
+    print("input", lims[-1], I.shape, D.shape)
+    rc = dataset.radiuses[new_query_id]
+    if len(dataset.queries) > 0:
+        dist_to_labeled = np.linalg.norm(dataset.x[new_query_id, :] - dataset.x[dataset.queries, :], axis=1)
+        diff_radiuses = dataset.radiuses[dataset.queries] + rc - dist_to_labeled
+        new_radiuses = dataset.radiuses.copy()
+        mask = (diff_radiuses > 0) * (dataset.y[new_query_id] != dataset.y[dataset.queries])
+        new_radiuses[dataset.queries[mask]] = \
+        np.maximum(0, 0.5 * (dataset.radiuses[dataset.queries] - rc + dist_to_labeled))[mask]
 
+        if mask.any():
+            new_radiuses[new_query_id] = rc - 0.5 * np.max(diff_radiuses[mask])
+        # Change the points that are considered as covered in the graph
+    else:
+        new_radiuses = dataset.radiuses
 
-def get_nearest_neighbour(x: np.array):
-    knn = NearestNeighbors(n_neighbors=2).fit(X=x)
-    _, idx = knn.kneighbors(x)
-    idx = idx[:, 1]  # contains the nearest neighbour for each point
-    return idx
+    dataset.observe(new_query_id, rc)
+    # Update for changed radiuses and new observed point
+    print("here", lims[-1], D.shape, I.shape)
+    lims, D, I = update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref, lims, D, I)
+    print("here after", lims[-1], D.shape, I.shape)
+
+    return lims, D, I
 
 
 def get_nn_faiss(x: np.array):
@@ -140,22 +86,6 @@ def get_nn_faiss(x: np.array):
     D, I = index.search(x.astype('float32'), 2)
     idx = I[:, 1]
     return idx
-
-
-def coclust(true_labels, pseudo_labels):
-    cm = confusion_matrix(true_labels, pseudo_labels)
-
-    def _make_cost_m(cm):
-        s = np.max(cm)
-        return (- cm + s)
-
-    indexes = linear_assignment(_make_cost_m(cm))
-    js = indexes[1]
-    cm2 = cm[:, js]
-    accuracy = np.trace(cm2) / np.sum(cm2)
-
-    return accuracy
-
 
 def get_purity_faiss(x, pseudo_labels, nn_idx, radius, plot_unpure_balls=False):
     """
@@ -221,48 +151,3 @@ def get_radius_faiss(alpha: float, x: np.array, pseudo_labels,
         get_purity_faiss(x, pseudo_labels, nn_idx, purity_radius, True)
 
     return purity_radius
-
-
-def check_P_cover(x, labeled_idx, radius: float, P=None):
-    assert (isinstance(P, int))
-    n_vertices = len(x)
-    unlabeled_idx = np.array(list(set(np.arange(n_vertices)) - set(labeled_idx)))
-    adjacency = adjacency_graph(x, radius)
-    dist_matrix = shortest_path(csgraph=adjacency, directed=False, indices=unlabeled_idx, return_predecessors=False)
-    paths_length = np.partition(dist_matrix, 1, axis=1)[:, 1]
-    max_length = np.max(shortest_path)
-    return max_length <= P
-
-
-def cover(x, labeled_idx, radius: float):
-    n_vertices = len(x)
-    unlabeled_idx = np.array(list(set(np.arange(n_vertices)) - set(labeled_idx)))
-    adjacency = adjacency_graph(x, radius)
-    covered = adjacency[unlabeled_idx.reshape(-1, 1), labeled_idx.reshape(1, -1)]
-    if ((covered.shape[0] == 0) or (covered.shape[1] == 0)):
-        covered_points = 0
-    else:
-        covered_points = np.sum(np.max(covered, axis=1)) / (len(unlabeled_idx))
-    return covered_points
-
-
-def check_cover(x, labeled_idx, radius: float, p_cover: float):
-    covered_points = cover(x, labeled_idx, radius)
-    return covered_points >= p_cover
-
-
-def get_covered_points(dataset, radius, id):
-    n_vertices = len(dataset.x)
-    distances = np.linalg.norm(dataset.x[id, :] - dataset.x[np.arange(n_vertices), :], axis=1)
-    covered = (distances <= radius)
-    return covered
-
-
-def get_all_covered_points(dataset):
-    n_vertices = len(dataset.x)
-    all_covered = np.array([], dtype=int)
-    for i, id in enumerate(dataset.queries):
-        distances = np.linalg.norm(dataset.x[id, :] - dataset.x[np.arange(n_vertices), :], axis=1)
-        covered = np.where(distances <= dataset.radiuses[i])[0]
-        all_covered = np.concatenate((all_covered, covered), axis=0).astype(int)
-    return np.unique(all_covered)
