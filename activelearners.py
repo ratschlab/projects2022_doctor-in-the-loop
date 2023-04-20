@@ -1,3 +1,4 @@
+
 import faiss
 import matplotlib.pyplot as plt
 import numpy as np
@@ -64,7 +65,6 @@ class RandomSampler(ActiveLearner):
             idx = np.random.choice(np.where(self.dataset.labeled == 0)[0], B, replace=False)
             self.dataset.observe(idx)
 
-
 class ProbCoverSampler_Faiss(ActiveLearner):
     def __init__(self, dataset, purity_threshold,
                  clustering: ClusteringAlgo,
@@ -120,7 +120,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
 
         # Initialize the labels
         n_pool = self.dataset.n_points
-
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
 
@@ -131,7 +130,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                 c_id = np.argmax(out_degrees * (self.dataset.labeled == 0))
             else:
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
-
             # Remove all incoming edges to the points covered by c_id
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
             self.dataset.observe(c_id, self.radius)
@@ -180,6 +178,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             else:
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
+
             self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
                                                                        self.I_ref, self.lims, self.D, self.I)
 

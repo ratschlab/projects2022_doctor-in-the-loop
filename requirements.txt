@@ -1,5 +1,4 @@
 
-faiss-gpu
 ipykernel
 ipython 
 ipython-genutils==0.2.0
@@ -12,4 +11,6 @@ Pillow
 scikit-learn 
 scipy==1.9.3
 seaborn
-sympy 
+sympy
+faiss-gpu
+
