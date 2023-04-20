@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 
+
 def adjacency_graph_faiss(x: np.array, initial_radius: float):
     n_features = x.shape[1]
     index = faiss.IndexFlatL2(n_features)  # build the index
@@ -86,6 +87,7 @@ def get_nn_faiss(x: np.array):
     D, I = index.search(x.astype('float32'), 2)
     idx = I[:, 1]
     return idx
+
 
 def get_purity_faiss(x, pseudo_labels, nn_idx, radius, plot_unpure_balls=False):
     """

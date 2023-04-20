@@ -154,7 +154,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                     self.dataset.x[self.dataset.labeled == 0].astype("float32"), n_neighbours)  # find K-nn for all
                 # set new radiuses as a weighted radius of the labeled K-nn (for all non labeled points)
                 # TODO: weigh this as inverse of distances but can cause issue, use yourself as a points, apply Gaussian kernel with (1:laplace, 2: gaussian, 8: flat )
-                gauss_distances = np.exp(-D_neighbours / 8)
+                gauss_distances = np.exp(-D_neighbours**8 / 8)
                 alpha = 1 / 2
                 weights = gauss_distances / (gauss_distances.sum(axis=1).reshape(-1, 1))
 
@@ -225,7 +225,7 @@ class BALDSampler(ActiveLearner):
                     index_knn = faiss.IndexFlatL2(2)  # build the index
                     index_knn.add(self.dataset.x[self.dataset.queries].astype("float32"))  # fit it to the labeled data
                     n_neighbours = K if len(self.dataset.queries) >= K else len(self.dataset.queries)
-                    _, I_neighbours = index_knn.search(self.dataset.x.astype("float32"), n_neighbours)  # find K-nn for all
+                    D_neighbours, I_neighbours = index_knn.search(self.dataset.x.astype("float32"), n_neighbours)  # find K-nn for all
 
                     scores=np.array([kl_divergence(P[self.dataset.queries[I_neighbours[p].squeeze()],:], P[p,:].reshape(1,-1)).mean() for p in np.where(self.dataset.labeled==0)[0]])
                     scores[self.dataset.queries]=0
