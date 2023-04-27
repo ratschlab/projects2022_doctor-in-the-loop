@@ -20,13 +20,11 @@ class ActiveDataset:
         self.labeled = np.zeros(self.n_points, dtype=int)
         self.queries = np.array([], dtype=int)
         self.radiuses = np.zeros(self.n_points)
-        self.regime= np.zeros(self.n_points, dtype=int)
 
     def restart(self):
         self.labeled = np.zeros(self.n_points, dtype=int)
         self.queries = np.array([], dtype=int)
         self.radiuses = np.zeros(self.n_points)
-        self.regime= np.array([], dtype=int)
 
     def observe(self, idx, regime, radiuses=None):
         self.labeled[idx] = 1
