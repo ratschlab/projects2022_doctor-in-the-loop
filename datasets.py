@@ -3,7 +3,7 @@ import numpy as np
 import seaborn as sns
 from sklearn.cluster import KMeans
 from sklearn.datasets import make_blobs
-
+from sklearn.svm import SVC
 
 class ActiveDataset:
     def __init__(self, n_points, random_state=None):
@@ -26,21 +26,33 @@ class ActiveDataset:
         self.queries = np.array([], dtype=int)
         self.radiuses = np.zeros(self.n_points)
 
-    def observe(self, idx, radiuses=None):
+    def observe(self, idx, regime, radiuses=None):
         self.labeled[idx] = 1
-        self.radiuses[idx] = radiuses
+        if radiuses is not None:
+            self.radiuses[idx] = radiuses
         if isinstance(idx, int):
             idx = np.array([idx])
         elif idx.ndim == 0:
             idx = np.array([idx])
-        self.queries = np.concatenate((self.queries, idx), axis=0).astype(int)
 
-    def plot_dataset(self):
+        if isinstance(regime, int):
+            regime = np.array([regime])
+        elif regime.ndim == 0:
+            regime = np.array([regime])
+
+        self.queries = np.concatenate((self.queries, idx), axis=0).astype(int)
+        self.regime = np.concatenate((self.regime, regime), axis=0).astype(int)
+
+    def plot_dataset(self, save=False, path=""):
         assert (self.x.shape[1] == 2)
         fig, ax = plt.subplots()
         ax.axis('equal')
         sns.scatterplot(x=self.x[:, 0], y=self.x[:, 1], hue=self.y, palette="Set2")
-        plt.show()
+        if save:
+            plt.savefig(path)
+            plt.close()
+        else:
+            plt.show()
 
     def get_labeled_data(self):
         return self.x[self.queries], self.y[self.queries]
@@ -48,7 +60,7 @@ class ActiveDataset:
     def get_all_data(self):
         return self.x, self.y
 
-    def plot_al(self, plot_circles=False, color='red'):
+    def plot_al(self, plot_circles=False, color='red', save= False, path=""):
         # Check that the data is 2-dimensional
         assert (self.x.shape[1] == 2)
 
@@ -60,8 +72,22 @@ class ActiveDataset:
             for i, u in enumerate(self.queries):
                 ax.add_patch(
                     plt.Circle((self.x[u, 0], self.x[u, 1]), self.radiuses[u], color=color, fill=False, alpha=0.5))
-        plt.show()
+        if save:
+            plt.savefig(path)
+            plt.close()
+        else:
+            plt.show()
 
+
+    def make_separable(self, linear= True, degree= 3):
+        if linear:
+            clf = SVC(kernel="linear")
+        else:
+            clf = SVC(kernel="rbf", degree=degree)
+        x_train, y_train = self.get_all_data()
+        clf.fit(x_train, y_train)
+        y_pred = clf.predict(x_train)
+        self.y= y_pred
 
 class PointClouds(ActiveDataset):
     def __init__(self, cluster_centers, cluster_std, cluster_samples, random_state=None):
@@ -76,6 +102,36 @@ class PointClouds(ActiveDataset):
     def generate_data(self):
         x, y = make_blobs(n_samples=self.cluster_samples, cluster_std=self.cluster_std,
                           centers=self.cluster_centers, n_features=self.n_features)
+        return x, y
+
+
+class FourWays(ActiveDataset):
+    def __init__(self, cluster_std, cluster_samples, random_state=None, separable=False):
+        self.n_cluster = 4
+        self.cluster_std = cluster_std
+        self.cluster_samples = cluster_samples.astype(int)
+        self.separable = separable
+
+        super(FourWays, self).__init__(np.sum(cluster_samples), random_state)
+        self.name = "Fourways"
+
+    def generate_data(self):
+        x, y = make_blobs(n_samples=self.cluster_samples, centers=np.array([[-1, -1], [-1, 1], [1, -1], [1, 1]]),
+                       cluster_std=self.cluster_std, n_features=2)
+
+        if self.separable:
+            sep_labels = []
+            for k in x:
+                if k[0] < 0 and k[1] < 0:
+                    sep_labels.append(0)
+                elif k[0] < 0 and k[1] > 0:
+                    sep_labels.append(1)
+                elif k[0] > 0 and k[1] < 0:
+                    sep_labels.append(2)
+                elif k[0] > 0 and k[1] > 0:
+                    sep_labels.append(3)
+            y = np.array(sep_labels)
+
         return x, y
 
 

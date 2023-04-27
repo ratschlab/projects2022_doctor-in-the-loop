@@ -10,6 +10,7 @@ from helper import get_radius_faiss, adjacency_graph_faiss, remove_incoming_edge
 from sklearn.cluster import KMeans
 from metrics import kl_divergence
 from IPython import embed
+
 class ActiveLearner:
     def __init__(self, dataset, model=None):
         self.dataset = dataset
@@ -70,6 +71,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                  clustering: ClusteringAlgo,
                  plot=[False, False],
                  search_range=[0, 10], search_step=0.01,
+                 radius= None,
                  adaptive=False,
                  model=None):
 
@@ -88,15 +90,18 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.purity_threshold = purity_threshold
 
         # Get radius for given purity threshold
-        self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range,
-                                       search_step,
-                                       plot_unpure_balls)
-        print(f"ProbCover Sampler initialized for threshold {self.purity_threshold} with radius {self.radius}")
+        if radius is None:
+            self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range,
+                                           search_step,
+                                           plot_unpure_balls)
+        else:
+            self.radius= radius
 
         # Initialize the graph
         self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
         self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
         self.adaptive = adaptive
+        self.dataset.radiuses = np.repeat(self.radius, len(self.dataset.x))
 
     def update_radius(self, new_radius):
         self.radius = new_radius
@@ -117,9 +122,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             self.clustering.plot()
 
     def query(self, M, B=1, n_initial=1):
-
-        # Initialize the labels
-        n_pool = self.dataset.n_points
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
 
@@ -128,22 +130,20 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             out_degrees = self.lims[1:] - self.lims[:-1]
             if np.any(out_degrees > 0):
                 c_id = np.argmax(out_degrees * (self.dataset.labeled == 0))
+                random_regime = False
+
             else:
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
+                random_regime= True
             # Remove all incoming edges to the points covered by c_id
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
-            self.dataset.observe(c_id, self.radius)
+            self.dataset.observe(c_id, int(random_regime))
+        return random_regime
 
-    def adaptive_query(self, M, K=3, B=1, n_initial=1):
-        # Initialize the labels
-        n_pool = self.dataset.n_points
-
+    def adaptive_query(self, M, deg, K=3, B=1, n_initial=1):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
-        print(self.lims[-1], self.D.shape, self.I.shape)
         for m in range(M):
-            print(f"querying point {len(self.dataset.queries) + 1}")
-
             # Update initial radiuses using k-means
             # TODO: could also be optimized using old distances? but would require some sort function? might not be faster
             if len(self.dataset.queries) > 0:
@@ -154,33 +154,47 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                     self.dataset.x[self.dataset.labeled == 0].astype("float32"), n_neighbours)  # find K-nn for all
                 # set new radiuses as a weighted radius of the labeled K-nn (for all non labeled points)
                 # TODO: weigh this as inverse of distances but can cause issue, use yourself as a points, apply Gaussian kernel with (1:laplace, 2: gaussian, 8: flat )
-                gauss_distances = np.exp(-D_neighbours**8 / 8)
-                alpha = 1 / 2
-                weights = gauss_distances / (gauss_distances.sum(axis=1).reshape(-1, 1))
-
                 new_radiuses = self.dataset.radiuses.copy()
-                # print("Checking the weights", weights.shape, weights.sum(axis=1))
-                # print("Checking the new radiuses", new_radiuses.max(), new_radiuses.min())
-                new_radiuses[self.dataset.labeled == 0] = alpha * (
-                        weights * self.dataset.radiuses[self.dataset.queries[I_neighbours]]).sum(axis=1) + (
-                                                                  1 - alpha) * self.dataset.radiuses[
-                                                              self.dataset.labeled == 0]
-                print(self.lims[-1], self.D.shape, self.I.shape)
+
+                gauss_distances = np.exp(-D_neighbours**deg / new_radiuses[self.dataset.labeled == 0].reshape(-1,1)**deg)
+                use_self = True
+
+                if use_self:
+                    norm = (gauss_distances.sum(axis=1, keepdims=True) + 1)
+                    alpha = (1 / norm)[:, 0]
+                    weights = gauss_distances / norm
+                    # new_radiuses[self.dataset.labeled == 0] = (weights * self.dataset.radiuses[
+                    #     self.dataset.queries[I_neighbours]]).sum(axis=1) + alpha * self.dataset.radiuses[
+                    #                                               self.dataset.labeled == 0]
+                    new_radiuses[self.dataset.labeled == 0] = (weights * self.dataset.radiuses[
+                        self.dataset.queries[I_neighbours]]).sum(axis=1) + alpha * self.radius
+                else:
+                    alpha = 1 / 2
+                    weights = gauss_distances / (gauss_distances.sum(axis=1).reshape(-1, 1))
+
+                    new_radiuses[self.dataset.labeled == 0] = alpha * (
+                            weights * self.dataset.radiuses[self.dataset.queries[I_neighbours]]).sum(axis=1) + (
+                                                                      1 - alpha) * self.dataset.radiuses[
+                                                                  self.dataset.labeled == 0]
 
                 self.lims, self.D, self.I = update_adjacency_radius_faiss(self.dataset, new_radiuses, self.lims_ref,
                                                                           self.D_ref, self.I_ref, self.lims, self.D,
                                                                           self.I)
-                print(self.lims[-1], self.D.shape, self.I.shape)
             # get the unlabeled point with highest out-degree
             out_degrees = self.lims[1:] - self.lims[:-1]
             if np.any(out_degrees > 0):
                 c_id = np.argmax(out_degrees * (self.dataset.labeled == 0))
+                random_regime = False
             else:
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
+                random_regime= True
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
 
             self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
-                                                                       self.I_ref, self.lims, self.D, self.I)
+                                                                       self.I_ref, self.lims, self.D, self.I, random_regime)
+        return random_regime
+
+
 
 
 class BALDSampler(ActiveLearner):
@@ -225,7 +239,7 @@ class BALDSampler(ActiveLearner):
                     index_knn = faiss.IndexFlatL2(2)  # build the index
                     index_knn.add(self.dataset.x[self.dataset.queries].astype("float32"))  # fit it to the labeled data
                     n_neighbours = K if len(self.dataset.queries) >= K else len(self.dataset.queries)
-                    D_neighbours, I_neighbours = index_knn.search(self.dataset.x.astype("float32"), n_neighbours)  # find K-nn for all
+                    _, I_neighbours = index_knn.search(self.dataset.x.astype("float32"), n_neighbours)  # find K-nn for all
 
                     scores=np.array([kl_divergence(P[self.dataset.queries[I_neighbours[p].squeeze()],:], P[p,:].reshape(1,-1)).mean() for p in np.where(self.dataset.labeled==0)[0]])
                     scores[self.dataset.queries]=0
