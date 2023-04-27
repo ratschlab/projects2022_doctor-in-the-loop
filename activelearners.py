@@ -62,13 +62,15 @@ class RandomSampler(ActiveLearner):
 
         for i in range(int(M / B)):
             idx = np.random.choice(np.where(self.dataset.labeled == 0)[0], B, replace=False)
-            self.dataset.observe(idx)
+            self.dataset.observe(idx, 1, 0)
+
 
 class ProbCoverSampler_Faiss(ActiveLearner):
     def __init__(self, dataset, purity_threshold,
                  clustering: ClusteringAlgo,
                  plot=[False, False],
                  search_range=[0, 10], search_step=0.01,
+                 radius= None,
                  adaptive=False,
                  model=None):
 
@@ -87,10 +89,12 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.purity_threshold = purity_threshold
 
         # Get radius for given purity threshold
-        self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range,
-                                       search_step,
-                                       plot_unpure_balls)
-        print(f"ProbCover Sampler initialized for threshold {self.purity_threshold} with radius {self.radius}")
+        if radius is None:
+            self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range,
+                                           search_step,
+                                           plot_unpure_balls)
+        else:
+            self.radius= radius
 
         # Initialize the graph
         self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
@@ -117,9 +121,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             self.clustering.plot()
 
     def query(self, M, B=1, n_initial=1):
-
-        # Initialize the labels
-        n_pool = self.dataset.n_points
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
 
@@ -128,22 +129,20 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             out_degrees = self.lims[1:] - self.lims[:-1]
             if np.any(out_degrees > 0):
                 c_id = np.argmax(out_degrees * (self.dataset.labeled == 0))
+                random_regime = False
+
             else:
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
+                random_regime= True
             # Remove all incoming edges to the points covered by c_id
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
-            self.dataset.observe(c_id, self.radius)
+            self.dataset.observe(c_id, int(random_regime))
+        return random_regime
 
-    def adaptive_query(self, M, K=3, B=1, n_initial=1):
-        # Initialize the labels
-        n_pool = self.dataset.n_points
-
+    def adaptive_query(self, M, deg, K=3, B=1, n_initial=1):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
-        print(self.lims[-1], self.D.shape, self.I.shape)
         for m in range(M):
-            print(f"querying point {len(self.dataset.queries) + 1}")
-
             # Update initial radiuses using k-means
             # TODO: could also be optimized using old distances? but would require some sort function? might not be faster
             if len(self.dataset.queries) > 0:
@@ -156,7 +155,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                 # TODO: weigh this as inverse of distances but can cause issue, use yourself as a points, apply Gaussian kernel with (1:laplace, 2: gaussian, 8: flat )
                 new_radiuses = self.dataset.radiuses.copy()
 
-                gauss_distances = np.exp(-D_neighbours**8 / new_radiuses[self.dataset.labeled == 0].reshape(-1,1)**8)
+                gauss_distances = np.exp(-D_neighbours**deg / new_radiuses[self.dataset.labeled == 0].reshape(-1,1)**deg)
                 use_self = True
 
                 if use_self:
@@ -172,25 +171,24 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                     alpha = 1 / 2
                     weights = gauss_distances / (gauss_distances.sum(axis=1).reshape(-1, 1))
 
-                    # print("Checking the weights", weights.shape, weights.sum(axis=1))
-                    # print("Checking the new radiuses", new_radiuses.max(), new_radiuses.min())
                     new_radiuses[self.dataset.labeled == 0] = alpha * (
                             weights * self.dataset.radiuses[self.dataset.queries[I_neighbours]]).sum(axis=1) + (
                                                                       1 - alpha) * self.dataset.radiuses[
                                                                   self.dataset.labeled == 0]
-                #print(self.lims[-1], self.D.shape, self.I.shape)
 
                 self.lims, self.D, self.I = update_adjacency_radius_faiss(self.dataset, new_radiuses, self.lims_ref,
                                                                           self.D_ref, self.I_ref, self.lims, self.D,
                                                                           self.I)
-                #print(self.lims[-1], self.D.shape, self.I.shape)
             # get the unlabeled point with highest out-degree
             out_degrees = self.lims[1:] - self.lims[:-1]
             if np.any(out_degrees > 0):
                 c_id = np.argmax(out_degrees * (self.dataset.labeled == 0))
+                random_regime = False
             else:
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
+                random_regime= True
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
 
             self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
-                                                                       self.I_ref, self.lims, self.D, self.I)
+                                                                       self.I_ref, self.lims, self.D, self.I, random_regime)
+        return random_regime
