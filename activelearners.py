@@ -64,7 +64,7 @@ class RandomSampler(ActiveLearner):
 
         for i in range(int(M / B)):
             idx = np.random.choice(np.where(self.dataset.labeled == 0)[0], B, replace=False)
-            self.dataset.observe(idx)
+            self.dataset.observe(idx, 1, 0)
 
 class ProbCoverSampler_Faiss(ActiveLearner):
     def __init__(self, dataset, purity_threshold,
@@ -108,7 +108,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.dataset.radiuses = np.repeat(self.radius, len(self.dataset.x))
         self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
         self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
-        print(f"Updated ProbCover Sampler radius: {self.radius}")
 
     def update_labeled(self, plot_clustering=False):
         if self.adaptive == False:
@@ -117,7 +116,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.pseudo_labels = self.clustering.pseudo_labels
         self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, [0, 10], 0.01)
         self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
-        print(f"Updated ProbCover Sampler using the new acquired labels, new radius: {self.radius}")
         if plot_clustering:
             self.clustering.plot()
 
