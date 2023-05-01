@@ -12,7 +12,7 @@ import sys
 from IPython import embed
 import os
 import pandas as pd
-
+import time
 
 
 def build_parser():
@@ -24,6 +24,8 @@ def build_parser():
     parser.add_argument('--n_points', type= int, required= True,
                         help="number of points per class")
 
+    parser.add_argument('--eval_freq', type=int, required= True,
+                        help= "how often to evaluate using 1-NN neighbours")
 
     parser.add_argument('--gauss', type= int, required=True,
                         help= 'norm for the gaussian weighting')
@@ -37,10 +39,10 @@ def build_parser():
     parser.add_argument('--radius', type= float, required= True,
                         help="initial radius for the adaptive probcover")
 
-    parser.add_argument('--seed', type= int, default=None,
+    parser.add_argument('--sd', type= int, default=None,
                         help= "run seed")
 
-    parser.add_argument('--run', type=str, default="run2",
+    parser.add_argument('--run', type=str, default="runs-28-04",
                         help='folder name')  # others are "linear" and "nonlinear"
 
     parser.add_argument('--neighbours_rad', type=int, default= 5,
@@ -50,47 +52,60 @@ def build_parser():
                         help= 'multiplicative term to drive the cluster centers further apart')
     return parser
 
-def simulate_run(algorithm: "str", dataset, test_dataset, args, seed=None, plot=False):
+def simulate_random(dataset, test_dataset, args):
+    dataset.restart()
+    scores=[]
+    learner = RandomSampler(dataset)
+    for _ in range(dataset.n_points):
+        learner.query(1)
+        # Train a 1-NN classifier and get the test accuracy
+        if len(dataset.queries)%args.eval_freq==0:
+            x_train, y_train = dataset.get_labeled_data()
+            x_test, y_test = test_dataset.get_all_data()
+            model = KNeighborsClassifier(1)
+            model.fit(x_train, y_train)
+            perf = model.score(x_test, y_test)
+            scores.append(perf)
+    return scores, dataset.queries
+
+
+def simulate_PC(algorithm: "str", dataset, test_dataset, args, plot=False):
+    assert((algorithm=="pc") or (algorithm=="adaptive_pc"))
     dataset.restart()
     n_classes = len(np.unique(dataset.y))
-    random_regime, random_transition= False, dataset.n_points
-    if algorithm == "random":
-        random_transition=0
-        learner = RandomSampler(dataset)
-    elif algorithm == "adaptive_pc" or algorithm == "pc":
-        clustering = MyKMeans(dataset, n_classes, random_clustering=seed)
-        if algorithm=="adaptive_pc":
-            learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering, radius= args.radius)
-        elif algorithm=="pc":
+
+    clustering = MyKMeans(dataset, n_classes)
+    if algorithm=="adaptive_pc":
+        if args.radius==0:
+            # Initialize the radius as in original Probcover
             learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering)
+        elif args.radius>0:
+            learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering, radius= args.radius)
+    elif algorithm=="pc":
+        learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering)
     scores = []
+    degrees = []
+    options = []
     for _ in range(dataset.n_points):
         # Query new points
-        if algorithm == "random":
-            learner.query(1)
-        elif algorithm == "pc":
-            if random_regime==False:
-                random_regime= learner.query(1)
-                random_transition= len(dataset.queries)-1
-            else:
-                _ = learner.query(1)
+        if algorithm == "pc":
+            deg, opt = learner.query(1)
         elif algorithm=="adaptive_pc":
-            if random_regime == False:
-                random_regime = learner.adaptive_query(1, K=args.neighbours_rad, deg= args.gauss)
-                random_transition = len(dataset.queries) - 1
-            else:
-                _ = learner.adaptive_query(1, K=args.neighbours_rad, deg= args.gauss)
-
+            deg, opt = learner.adaptive_query(1, K=args.neighbours_rad, deg= args.gauss)
+            print(deg, opt)
+        degrees.append(deg)
+        options.append(opt)
         if plot and len(dataset.queries)%5==0 and len(dataset.queries)<=100:
             dataset.plot_al(True)
         # Train a 1-NN classifier and get the test accuracy
-        x_train, y_train = dataset.get_labeled_data()
-        x_test, y_test = test_dataset.get_all_data()
-        model = KNeighborsClassifier(1)
-        model.fit(x_train, y_train)
-        perf = model.score(x_test, y_test)
-        scores.append(perf)
-    return scores, dataset.queries, dataset.radiuses, dataset.regime, random_transition
+        if len(dataset.queries)%args.eval_freq==0:
+            x_train, y_train = dataset.get_labeled_data()
+            x_test, y_test = test_dataset.get_all_data()
+            model = KNeighborsClassifier(1)
+            model.fit(x_train, y_train)
+            perf = model.score(x_test, y_test)
+            scores.append(perf)
+    return scores, dataset.queries, dataset.radiuses, degrees, options
 
 def get_fullsup_accuracy(dataset, test_dataset):
     x_train, y_train = dataset.get_all_data()
@@ -118,32 +133,55 @@ def get_data(dataset_name: str, args):
 
 if __name__ == "__main__":
     args = build_parser().parse_args(tuple(sys.argv[1:]))
-    if args.seed is not None:
-        np.random.seed(args.seed)
+    if args.sd is not None:
+        np.random.seed(args.sd)
 
     # get the training and testing data
     dataset, dataset_test = get_data("clouds", args)
-    run_path= f"./{args.run}/{args.separable}_{args.n_points}_{args.std}_{args.gauss}_{args.tsh}_{args.radius}_{args.seed}"
-
-    # simulate the runs
-    random_scores, random_queries, _, random_regime, _ = simulate_run("random", dataset, dataset_test, args)
-    pc_scores, pc_queries, pc_radiuses, pc_regime, pc_transition = simulate_run("pc", dataset, dataset_test, args)
-    adpc_scores,  adpc_queries, adpc_radiuses, adpc_regime, adpc_transition = simulate_run("adaptive_pc", dataset, dataset_test, args)
-    real_score= get_fullsup_accuracy(dataset, dataset_test)
-
-    # saving the run into csv files
-    scores = pd.DataFrame({'pc_scores': pc_scores, 'adaptive_scores': adpc_scores, 'random_scores': random_scores,
-                           'full_scores': np.repeat(real_score, len(pc_scores))})
-    queries = pd.DataFrame({'pc_queries': pc_queries, 'pc_radiuses': pc_radiuses,
-                            'adaptive_queries': adpc_queries, 'adaptive_radiuses': adpc_radiuses,
-                            'random_queries': random_queries})
-    transitions = pd.DataFrame({'pc': pc_regime, 'adaptive': adpc_regime})
-
+    run_path= f"./{args.run}/{args.separable}_{args.n_points}_{args.std}_{args.gauss}_{args.tsh}_{args.radius}_{args.eval_freq}_{args.sd}"
     if not os.path.exists(run_path):
         os.makedirs(run_path)
-    scores.to_csv(f'{run_path}/scores.csv')
-    queries.to_csv(f'{run_path}/queries.csv')
-    transitions.to_csv(f'{run_path}/transitions.csv')
-    dataset.plot_dataset(save=True, path= f'{run_path}/train.png')
-    dataset_test.plot_dataset(save=True, path= f'{run_path}/test.png')
+    print(run_path)
+    # simulate the runs
+    if args.radius==0:
+        print("Running the benchmarks")
+        start_time= time.time()
+        # only needs to be run once per dataset (does not depend on gauss or radius) (depends on std)
+        random_scores, random_queries = simulate_random(dataset, dataset_test, args)
+        random_time = time.time()
+        print(f"Random ran in {(random_time-start_time)/60} minutes")
+        pc_scores, pc_queries, pc_radiuses, pc_degrees, pc_options = simulate_PC("pc", dataset, dataset_test, args)
+        pc_time= time.time()
+        print(f"ProbCover ran in {(pc_time-random_time)/60} minutes")
+        adpc_scores, adpc_queries, adpc_radiuses, adpc_degrees, adpc_options = simulate_PC("adaptive_pc", dataset, dataset_test, args)
+        adpc_time= time.time()
+        print(f"Adaptive ProbCover ran in {(adpc_time-pc_time)/60} minutes")
+        real_score = get_fullsup_accuracy(dataset, dataset_test)
+        final_time= time.time()
+        print(f"Total run time {(final_time-start_time)/60} minutes")
+
+        random_df = pd.DataFrame({'random_scores': np.repeat(random_scores, args.eval_freq), 'random_queries': random_queries})
+        pc_df = pd.DataFrame({'pc_scores': np.repeat(pc_scores, args.eval_freq),
+                              'pc_queries': pc_queries, 'pc_radiuses': pc_radiuses,
+                              'pc_degrees': pc_degrees, 'pc_options': pc_options})
+        adpc_df = pd.DataFrame({'adpc_scores': np.repeat(adpc_scores, args.eval_freq),
+                                'adpc_queries': adpc_queries, 'adpc_radiuses': adpc_radiuses,
+                                'adpc_degrees': adpc_degrees, 'adpc_options': adpc_options})
+        full_df = pd.DataFrame({'full_scores': np.repeat(real_score, len(pc_scores))})
+
+        random_df.to_csv(f'{run_path}/random.csv')
+        pc_df.to_csv(f'{run_path}/pc.csv')
+        adpc_df.to_csv(f'{run_path}/adaptive_pc.csv')
+        full_df.to_csv(f'{run_path}/full.csv')
+        dataset.plot_dataset(save=True, path=f'{run_path}/train.png')
+        dataset_test.plot_dataset(save=True, path=f'{run_path}/test.png')
+    elif args.radius>0:
+        print("Running adaptive only")
+        start_time=time.time()
+        adpc_scores,  adpc_queries, adpc_radiuses, adpc_degrees, adpc_options = simulate_PC("adaptive_pc", dataset, dataset_test, args)
+        stop_time= time.time()
+        print(f"Adaptive ProbCover ran in {(stop_time-start_time)/60} minutes")
+        adpc_df = pd.DataFrame({'adpc_scores': adpc_scores, 'adpc_queries': adpc_queries, 'adpc_radiuses': adpc_radiuses,
+                                'adpc_degrees': adpc_degrees, 'adpc_options': adpc_options})
+        adpc_df.to_csv(f'{run_path}/adaptive_pc.csv')
     print("done")

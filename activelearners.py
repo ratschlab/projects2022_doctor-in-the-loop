@@ -64,7 +64,7 @@ class RandomSampler(ActiveLearner):
 
         for i in range(int(M / B)):
             idx = np.random.choice(np.where(self.dataset.labeled == 0)[0], B, replace=False)
-            self.dataset.observe(idx, 1, 0)
+            self.dataset.observe(idx)
 
 class ProbCoverSampler_Faiss(ActiveLearner):
     def __init__(self, dataset, purity_threshold,
@@ -122,21 +122,21 @@ class ProbCoverSampler_Faiss(ActiveLearner):
     def query(self, M, B=1, n_initial=1):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
-
         for _ in range(M):
             # get the unlabeled point with highest out-degree
             out_degrees = self.lims[1:] - self.lims[:-1]
             if np.any(out_degrees > 0):
                 c_id = np.argmax(out_degrees * (self.dataset.labeled == 0))
-                random_regime = False
-
+                out_degree = out_degrees[c_id]
+                n_options = len(np.where(out_degrees*(self.dataset.labeled==0)==out_degree)[0])
             else:
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
-                random_regime= True
+                out_degree= 0
+                n_options= len(np.where(self.dataset.labeled == 0)[0])
             # Remove all incoming edges to the points covered by c_id
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
-            self.dataset.observe(c_id, int(random_regime))
-        return random_regime
+            self.dataset.observe(c_id)
+            return out_degree, n_options
 
     def adaptive_query(self, M, deg, K=3, B=1, n_initial=1):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
@@ -182,17 +182,18 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             out_degrees = self.lims[1:] - self.lims[:-1]
             if np.any(out_degrees > 0):
                 c_id = np.argmax(out_degrees * (self.dataset.labeled == 0))
-                random_regime = False
+                out_degree = out_degrees[c_id]
+                n_options = len(np.where(out_degrees * (self.dataset.labeled == 0) == out_degree)[0])
             else:
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
-                random_regime= True
+                out_degree = 0
+                n_options = len(np.where(self.dataset.labeled == 0)[0])
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
 
             self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
-                                                                       self.I_ref, self.lims, self.D, self.I, random_regime)
-        return random_regime
+                                                                       self.I_ref, self.lims, self.D, self.I)
 
-
+        return out_degree, n_options
 
 
 class BALDSampler(ActiveLearner):
@@ -242,7 +243,6 @@ class BALDSampler(ActiveLearner):
                     scores=np.array([kl_divergence(P[self.dataset.queries[I_neighbours[p].squeeze()],:], P[p,:].reshape(1,-1)).mean() for p in np.where(self.dataset.labeled==0)[0]])
                     scores[self.dataset.queries]=0
 
-                    #(Look at Query 106 and 545 for example, to see why the sampler is not selecting at the margins)
                     if np.max(scores)>0:
                         c_id= np.argmax(scores)
                     else:

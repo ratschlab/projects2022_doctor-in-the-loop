@@ -54,7 +54,7 @@ def update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref,
     return lims, D, I
 
 
-def reduce_intersected_balls_faiss(dataset, new_query_id, lims_ref, D_ref, I_ref, lims, D, I, random_regime):
+def reduce_intersected_balls_faiss(dataset, new_query_id, lims_ref, D_ref, I_ref, lims, D, I):
     rc = dataset.radiuses[new_query_id]
     if len(dataset.queries) > 0:
         dist_to_labeled = np.linalg.norm(dataset.x[new_query_id, :] - dataset.x[dataset.queries, :], axis=1)
@@ -70,7 +70,7 @@ def reduce_intersected_balls_faiss(dataset, new_query_id, lims_ref, D_ref, I_ref
     else:
         new_radiuses = dataset.radiuses
 
-    dataset.observe(new_query_id, random_regime, rc)
+    dataset.observe(new_query_id, rc)
     # Update for changed radiuses and new observed point
     lims, D, I = update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref, lims, D, I)
 

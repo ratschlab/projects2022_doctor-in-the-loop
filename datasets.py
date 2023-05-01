@@ -20,14 +20,13 @@ class ActiveDataset:
         self.labeled = np.zeros(self.n_points, dtype=int)
         self.queries = np.array([], dtype=int)
         self.radiuses = np.zeros(self.n_points)
-        self.regime = np.array([], dtype=int)
+
     def restart(self):
         self.labeled = np.zeros(self.n_points, dtype=int)
         self.queries = np.array([], dtype=int)
         self.radiuses = np.zeros(self.n_points)
-        self.regime = np.array([], dtype=int)
 
-    def observe(self, idx, regime, radiuses=None):
+    def observe(self, idx, radiuses=None):
         self.labeled[idx] = 1
         if radiuses is not None:
             self.radiuses[idx] = radiuses
@@ -36,13 +35,7 @@ class ActiveDataset:
         elif idx.ndim == 0:
             idx = np.array([idx])
 
-        if isinstance(regime, int):
-            regime = np.array([regime])
-        elif regime.ndim == 0:
-            regime = np.array([regime])
-
         self.queries = np.concatenate((self.queries, idx), axis=0).astype(int)
-        self.regime = np.concatenate((self.regime, regime), axis=0).astype(int)
 
     def plot_dataset(self, save=False, path=""):
         assert (self.x.shape[1] == 2)
