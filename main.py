@@ -139,6 +139,7 @@ if __name__ == "__main__":
     # get the training and testing data
     dataset, dataset_test = get_data("clouds", args)
     run_path= f"./{args.run}/{args.separable}_{args.n_points}_{args.std}_{args.gauss}_{args.tsh}_{args.radius}_{args.eval_freq}_{args.sd}"
+
     if not os.path.exists(run_path):
         os.makedirs(run_path)
     print(run_path)

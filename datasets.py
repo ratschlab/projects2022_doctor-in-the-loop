@@ -225,31 +225,23 @@ class TwoMoons(ActiveDataset):
 
 
 class CIFAR_simclr(ActiveDataset):
-    def __init__(self, n_classes, n_epochs, random_state=None):
+    def __init__(self, dataset, n_epochs, train, trunk=True, random_state=None):
         # TODO Change path so that it works in general
-        self.path = f"/Users/victoriabarenne/projects2022_doctor-in-the-loop/cifar{n_classes}features_simclr/"
         self.n_epochs = n_epochs
-        self.n_classes = n_classes
-        self.name = f"CIFAR{n_classes}_{self.n_epochs}epochs"
-        super(CIFAR_simclr, self).__init__(10000, random_state)
+        self.dataset= dataset
+        self.trunk= trunk
+        self.train= train
+        n_points= 50000 if self.train else 10000
+        if self.trunk:
+            self.path = f"./data/{self.dataset}/{self.n_epochs}epochs/"
+        else:
+            self.path= f"./data/{self.dataset}/{self.n_epochs}epochs/head/"
+        super(CIFAR_simclr, self).__init__(n_points, random_state)
 
     def generate_data(self):
-        x = np.load(self.path + f"features_{self.n_epochs}epochs.npy")
-        y = np.load(self.path + f"cifar{self.n_classes}_labels.npy")
+        str= "train" if self.train else "test"
+        x = np.load(self.path + f"{str}_features.npy")
+        y = np.load(self.path + f"{str}_targets.npy")
 
         return x, y.squeeze()
 
-    def split(self, train_idx, test_idx):
-        # create a copy
-        train, test = type(self)(self.n_classes, self.n_epochs, self.random_state), type(self)(self.n_classes,
-                                                                                               self.n_epochs,
-                                                                                               self.random_state)
-        train.x, train.y, train.labeled = self.x[train_idx], self.y[train_idx], self.labeled[train_idx]
-        test.x, test.y, test.labeled = self.x[test_idx], self.y[test_idx], self.labeled[test_idx]
-        train.n_points, test.n_points = len(train_idx), len(test_idx)
-        query_in_train = np.isin(self.queries, train_idx)
-        query_in_test = np.isin(self.queries, test_idx)
-        assert (np.all(query_in_train.astype(int) + query_in_test.astype(int) == 1))
-        train.queries = list(np.array(self.queries)[query_in_train])
-        test.queries = list(np.array(self.queries)[query_in_test])
-        return train, test
