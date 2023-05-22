@@ -1,19 +1,25 @@
 from torch.utils.data import DataLoader
-import torch
-from vissl.utils.hydra_config import AttrDict
-from vissl.models import build_model
-from vissl.utils.hydra_config import compose_hydra_configuration, convert_to_attrdict
-from classy_vision.generic.util import load_checkpoint
-from vissl.utils.checkpoint import init_model_from_consolidated_weights
 import numpy as np
 import torchvision
-from torchvision.transforms import Resize, Compose, ToTensor
+from torchvision.transforms import Resize, Compose, ToTensor, Normalize, CenterCrop
 import torch
 from torch.utils.data import Dataset
 from IPython import embed
 import os
 import argparse
 import sys
+import torch.nn as nn
+import torch.nn.functional as F
+
+import numpy as np
+import pandas as pd
+
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from models import resnet18
+from models import ContrastiveModel
+
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -30,9 +36,6 @@ def build_parser():
 
     parser.add_argument('--dataset', type= str, required=True,
                         help='"cifar10" or "cifar100"')
-
-    parser.add_argument('--trunk', type= str2bool, default= True,
-                        help= 'Whether to extract the features from the "trunk" or the "head"')
 
     parser.add_argument('--n_epochs', type=int, required=True,
                         help='number of pre-training epochs for the simclr model') # 100, 200, 400, 800, 1000
@@ -51,96 +54,71 @@ class custom_subset(Dataset):
         return len(self.targets)
 
 
+
 if __name__ == "__main__":
     args = build_parser().parse_args(tuple(sys.argv[1:]))
+    mean= [0.4914, 0.4822, 0.4465] if args.dataset=="cifar10" else [0.5071, 0.4867, 0.4408]
+    std= [0.2023, 0.1994, 0.2010] if args.dataset=="cifar100" else [0.2675, 0.2565, 0.2761]
+    crop_size= 32
+    transform = Compose([CenterCrop(crop_size),
+                         ToTensor(),
+                         Normalize(mean=mean, std=std)])
 
-    transform= Compose([ToTensor(), Resize(224)])
+
     if args.dataset=="cifar10":
-        cifar_traindata = torchvision.datasets.CIFAR10(root="./.", transform= transform, train= True , download=True)
-        cifar_testdata = torchvision.datasets.CIFAR10(root="./.", transform= transform, train= False , download=True)
+        dataset_train = torchvision.datasets.CIFAR10(root="./.", transform= transform, train= True , download=True)
+        dataset_test = torchvision.datasets.CIFAR10(root="./.", transform= transform, train= False , download=True)
     elif args.dataset=="cifar100":
-        cifar_traindata = torchvision.datasets.CIFAR100(root=".", transform= transform, train= True , download=True)
-        cifar_testdata = torchvision.datasets.CIFAR100(root=".", transform= transform, train= False , download=True)
+        dataset_train = torchvision.datasets.CIFAR100(root=".", transform= transform, train= True , download=True)
+        dataset_test = torchvision.datasets.CIFAR100(root=".", transform= transform, train= False , download=True)
 
-    dataset_train= custom_subset(cifar_traindata, np.arange(len(cifar_traindata)))
-    dataset_test= custom_subset(cifar_testdata, np.arange(len(cifar_testdata)))
 
     train_loader = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, shuffle=False)
     test_loader = torch.utils.data.DataLoader(dataset_test, batch_size=args.batch_size, shuffle=False)
 
-
-    run_path= f"./data/{args.dataset}/{args.n_epochs}epochs"
-    if args.trunk==False:
-        run_path = f"./data/{args.dataset}/{args.n_epochs}epochs/head"
+    run_path= f"./data/new_transform/normalized/{args.dataset}/{args.n_epochs}epochs"
 
     if not os.path.exists(run_path):
         os.makedirs(run_path)
+    np.save(f"{run_path}/train_targets", np.array(dataset_train.targets).reshape(-1,1))
+    np.save(f"{run_path}/test_targets", np.array(dataset_test.targets).reshape(-1,1))
 
-    np.save(f"{run_path}/train_targets", dataset_train.targets.reshape(-1,1))
-    np.save(f"{run_path}/test_targets", dataset_test.targets.reshape(-1,1))
-
-
-    cfg = [
-        'config=pretrain/simclr/simclr_8node_resnet.yaml',
-        f'config.MODEL.WEIGHTS_INIT.PARAMS_FILE=./models/resnet50_simclr_{args.n_epochs}ep.torch',
-        # Specify path for the model weights.
-        'config.MODEL.FEATURE_EVAL_SETTINGS.EVAL_MODE_ON=True',  # Turn on model evaluation mode.
-        'config.MODEL.FEATURE_EVAL_SETTINGS.FREEZE_TRUNK_ONLY=True',  # Freeze trunk.
-        # 'config.MODEL.FEATURE_EVAL_SETTINGS.EXTRACT_TRUNK_FEATURES_ONLY=True', # Extract the trunk features, as opposed to the HEAD. -> features of size 2048
-        f'config.MODEL.FEATURE_EVAL_SETTINGS.EXTRACT_TRUNK_FEATURES_ONLY={args.trunk}',
-        # Extract the trunk features, as opposed to the HEAD. -> features of size 128
-        'config.MODEL.FEATURE_EVAL_SETTINGS.SHOULD_FLATTEN_FEATS=True',  # Do not flatten features.
-        'config.MODEL.FEATURE_EVAL_SETTINGS.LINEAR_EVAL_FEAT_POOL_OPS_MAP=[["res5avg", ["Identity", []]]]'
-        # Extract only the res5avg features.
-    ]
-
-    # Compose the hydra configuration.
-    cfg = compose_hydra_configuration(cfg)
-    _, cfg = convert_to_attrdict(cfg)
-
-    # Build the model
-    model = build_model(cfg.MODEL, cfg.OPTIMIZER)
-    print(cfg.MODEL.WEIGHTS_INIT.PARAMS_FILE)
-    # Load the checkpoint weights.
-    weights = load_checkpoint(checkpoint_path=cfg.MODEL.WEIGHTS_INIT.PARAMS_FILE)
-
-    # Initialize the model with the simclr model weights.
-    init_model_from_consolidated_weights(
-        config=cfg,
-        model=model,
-        state_dict=weights,
-        state_dict_key_name="classy_state_dict",
-        skip_layers=[],  # Use this if you do not want to load all layers
-    )
-
+    #Build the model
+    backbone = resnet18()
+    model_kwargs =  {'head': 'mlp', 'features_dim': 128}
+    model = ContrastiveModel(backbone, **model_kwargs)
+    model.load_state_dict(torch.load(f"/Users/victoriabarenne/Documents/DoctorLoop/models/scan-{args.dataset}/resnet18_simclr_{args.n_epochs}epochs.pth.tar", map_location="cpu"))
     print("Weights have loaded")
     model.eval()
-    if args.trunk:
-        extracted_features_train = np.empty(shape=(0, 2048))
-        extracted_features_test = np.empty(shape=(0, 2048))
 
-    else:
-        extracted_features_train= np.empty(shape=(0, 128))
-        extracted_features_test= np.empty(shape=(0, 128))
+    if not os.path.exists(f"{run_path}/test_features.npy"):
+        print(f"{run_path}/test_features.npy does not exist")
+        # Extracting the features for the testing data
+        extracted_features_test = np.empty(shape=(0, 512))
+        for id, (img, target) in enumerate(test_loader):
+            features = model.backbone(img.to(torch.float32))
+            extracted_features_test = np.append(extracted_features_test, features.detach(), axis=0)
+            print(id, extracted_features_test.shape)
+        np.save(f"{run_path}/test_features", extracted_features_test)
 
-    # Extracting the features for the testing data
-    for id, (img, target) in enumerate(test_loader):
-        img = img.permute((0, 3, 1, 2))
-        features = model(img.to(torch.float32))
-        extracted_features_test = np.append(extracted_features_test, features[0].detach(), axis=0)
-        print(id, extracted_features_test.shape)
+    if not os.path.exists(f"{run_path}/train_features.npy"):
+        print(f"{run_path}/train_features.npy does not exist")
+        extracted_features_train = np.empty(shape=(0, 512))
+        # Extracting the features for the training data
+        for id, (img, target) in enumerate(train_loader):
+            features = model.backbone(img.to(torch.float32))
+            extracted_features_train = np.append(extracted_features_train, features.detach(), axis=0)
+            print(id, extracted_features_train.shape)
+        np.save(f"{run_path}/train_features", extracted_features_train)
 
-    # Extracting the features for the training data
-    for id, (img, target) in enumerate(train_loader):
-        img = img.permute((0, 3, 1, 2))
-        features = model(img.to(torch.float32))
-        extracted_features_train = np.append(extracted_features_train, features[0].detach(), axis=0)
-        print(id, extracted_features_train.shape)
+    # normalizing the features
+    if not os.path.exists(f"{run_path}/train_features_normalized.npy") or not os.path.exists(f"{run_path}/test_features_normalized.npy"):
+        train_features= np.load(f"{run_path}/train_features.npy")
+        test_features= np.load(f"{run_path}/test_features.npy")
 
-    np.save(f"{run_path}/train_features", extracted_features_train)
-    np.save(f"{run_path}/test_features", extracted_features_test)
+        train_features= F.normalize(torch.from_numpy(train_features), dim=1)
+        test_features= F.normalize(torch.from_numpy(test_features), dim=1)
 
-
-
-
+        np.save(f"{run_path}/train_features_normalized", train_features)
+        np.save(f"{run_path}/test_features_normalized", test_features)
 

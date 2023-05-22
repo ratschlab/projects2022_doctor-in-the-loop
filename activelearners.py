@@ -70,7 +70,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
     def __init__(self, dataset, purity_threshold,
                  clustering: ClusteringAlgo,
                  plot=[False, False],
-                 search_range=[0, 10], search_step=0.01,
+                 search_range=[0, 20], search_step=0.01,
                  radius= None,
                  adaptive=False,
                  model=None):
@@ -126,17 +126,18 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             # get the unlabeled point with highest out-degree
             out_degrees = self.lims[1:] - self.lims[:-1]
             if np.any(out_degrees > 0):
-                c_id = np.argmax(out_degrees * (self.dataset.labeled == 0))
-                out_degree = out_degrees[c_id]
-                n_options = len(np.where(out_degrees*(self.dataset.labeled==0)==out_degree)[0])
+                max_out_degree= np.max(out_degrees)
+                options = np.where(out_degrees*(self.dataset.labeled==0)==max_out_degree)[0]
+                n_options= len(options)
+                c_id= np.random.choice(options)
             else:
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
-                out_degree= 0
+                max_out_degree= 0
                 n_options= len(np.where(self.dataset.labeled == 0)[0])
             # Remove all incoming edges to the points covered by c_id
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
             self.dataset.observe(c_id)
-            return out_degree, n_options
+            return max_out_degree, n_options
 
     def adaptive_query(self, M, deg, K=3, B=1, n_initial=1):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
@@ -145,7 +146,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             # Update initial radiuses using k-means
             # TODO: could also be optimized using old distances? but would require some sort function? might not be faster
             if len(self.dataset.queries) > 0:
-                index_knn = faiss.IndexFlatL2(2)  # build the index
+                index_knn = faiss.IndexFlatL2(self.dataset.d)  # build the index
                 index_knn.add(self.dataset.x[self.dataset.queries].astype("float32"))  # fit it to the labeled data
                 n_neighbours = K if len(self.dataset.queries) >= K else len(self.dataset.queries)
                 D_neighbours, I_neighbours = index_knn.search(
@@ -181,19 +182,21 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             # get the unlabeled point with highest out-degree
             out_degrees = self.lims[1:] - self.lims[:-1]
             if np.any(out_degrees > 0):
-                c_id = np.argmax(out_degrees * (self.dataset.labeled == 0))
-                out_degree = out_degrees[c_id]
-                n_options = len(np.where(out_degrees * (self.dataset.labeled == 0) == out_degree)[0])
+                max_out_degree= np.max(out_degrees)
+                options = np.where(out_degrees*(self.dataset.labeled==0)==max_out_degree)[0]
+                n_options= len(options)
+                c_id= np.random.choice(options)
             else:
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
-                out_degree = 0
+                max_out_degree = 0
                 n_options = len(np.where(self.dataset.labeled == 0)[0])
+
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
 
             self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
                                                                        self.I_ref, self.lims, self.D, self.I)
 
-        return out_degree, n_options
+        return max_out_degree, n_options
 
 
 class BALDSampler(ActiveLearner):
@@ -212,7 +215,7 @@ class BALDSampler(ActiveLearner):
                 # hope to discover all classes that way
                 self.random_seed_init=1
                 kmeans = KMeans(n_clusters=self.n_classes, random_state=self.random_seed_init).fit(self.dataset.x)
-                index_kmeans= faiss.IndexFlatL2(2)
+                index_kmeans= faiss.IndexFlatL2(self.dataset.d)
                 index_kmeans.add(self.dataset.x.astype("float32"))
                 _, I_centroids = index_kmeans.search(kmeans.cluster_centers_.astype("float32"), 1)
                 self.dataset.observe(I_centroids.squeeze())
@@ -226,7 +229,7 @@ class BALDSampler(ActiveLearner):
                     P[self.dataset.queries,self.dataset.y[self.dataset.queries]]= 1
                     # for all other points calculate the distance to each class
                     for c in range(self.n_classes):
-                        index_to_c= faiss.IndexFlatL2(2)
+                        index_to_c= faiss.IndexFlatL2(self.dataset.d)
                         idx_in_c= self.dataset.queries[self.dataset.y[self.dataset.queries]==c]
                         index_to_c.add(self.dataset.x[idx_in_c].astype("float32"))
                         D_to_c, _ = index_to_c.search(self.dataset.x[self.dataset.labeled==0].astype("float32"), 1)
@@ -235,7 +238,7 @@ class BALDSampler(ActiveLearner):
                     P= P/P.sum(axis=1).reshape(-1,1)
 
                     #Compute score as the mean Kl_divergence between itself and its K-nn
-                    index_knn = faiss.IndexFlatL2(2)  # build the index
+                    index_knn = faiss.IndexFlatL2(self.dataset.d)  # build the index
                     index_knn.add(self.dataset.x[self.dataset.queries].astype("float32"))  # fit it to the labeled data
                     n_neighbours = K if len(self.dataset.queries) >= K else len(self.dataset.queries)
                     _, I_neighbours = index_knn.search(self.dataset.x.astype("float32"), n_neighbours)  # find K-nn for all

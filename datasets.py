@@ -14,6 +14,7 @@ class ActiveDataset:
             state = np.random.get_state()
             np.random.seed(self.random_state)
         self.x, self.y = self.generate_data()
+        self.d= self.x.shape[1]
         if self.random_state is not None:
             np.random.set_state(state)
 
@@ -225,22 +226,23 @@ class TwoMoons(ActiveDataset):
 
 
 class CIFAR_simclr(ActiveDataset):
-    def __init__(self, dataset, n_epochs, train, trunk=True, random_state=None):
+    def __init__(self, dataset, n_epochs, train, normalized= True, random_state=None):
         # TODO Change path so that it works in general
         self.n_epochs = n_epochs
         self.dataset= dataset
-        self.trunk= trunk
         self.train= train
+        self.normalized= normalized
         n_points= 50000 if self.train else 10000
-        if self.trunk:
-            self.path = f"./data/{self.dataset}/{self.n_epochs}epochs/"
-        else:
-            self.path= f"./data/{self.dataset}/{self.n_epochs}epochs/head/"
+        # self.path = f"./data/normalized/{self.dataset}/{self.n_epochs}epochs/"
+        self.path = f"./data/new_transform/normalized/{self.dataset}/{self.n_epochs}epochs/"
         super(CIFAR_simclr, self).__init__(n_points, random_state)
 
     def generate_data(self):
         str= "train" if self.train else "test"
-        x = np.load(self.path + f"{str}_features.npy")
+        if self.normalized:
+            x = np.load(self.path + f"{str}_features_normalized.npy")
+        else:
+            x = np.load(self.path + f"{str}_features.npy")
         y = np.load(self.path + f"{str}_targets.npy")
 
         return x, y.squeeze()

@@ -14,7 +14,7 @@ def adjacency_graph_faiss(x: np.array, initial_radius: float):
 
 def remove_incoming_edges_faiss(dataset, lims, D, I, query_idx=None):
     if len(dataset.queries) > 0:
-        if query_idx == None:
+        if query_idx is None:
             query_idx = dataset.queries
         if isinstance(query_idx, np.int64):
             query_idx = np.array([query_idx])
