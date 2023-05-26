@@ -70,7 +70,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
     def __init__(self, dataset, purity_threshold,
                  clustering: ClusteringAlgo,
                  plot=[False, False],
-                 search_range=[0, 20], search_step=0.01,
+                 search_range=[0, 1.0], search_step=0.01,
                  radius= None,
                  adaptive=False,
                  model=None):
@@ -119,8 +119,9 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         if plot_clustering:
             self.clustering.plot()
 
-    def query(self, M, B=1, n_initial=1):
+    def query(self, M, B=1, n_initial=1, reinitialize= False):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
+        # if len(self.dataset.queries)==0 or reinitialize:
         self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
         for _ in range(M):
             # get the unlabeled point with highest out-degree
@@ -135,15 +136,15 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                 max_out_degree= 0
                 n_options= len(np.where(self.dataset.labeled == 0)[0])
             # Remove all incoming edges to the points covered by c_id
-            self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
             self.dataset.observe(c_id)
+            # self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
             return max_out_degree, n_options
 
-    @profile
     def adaptive_query(self, M, deg, K=3, B=1, n_initial=1, reinitialize= False):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if len(self.dataset.queries)==0 or reinitialize:
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
+            self.new_radiuses= self.dataset.radiuses.copy()
         for m in range(M):
             # Update initial radiuses using k-means
             # TODO: could also be optimized using old distances? but would require some sort function? might not be faster
@@ -155,9 +156,8 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                     self.dataset.x[self.dataset.labeled == 0].astype("float32"), n_neighbours)  # find K-nn for all
                 # set new radiuses as a weighted radius of the labeled K-nn (for all non labeled points)
                 # TODO: weigh this as inverse of distances but can cause issue, use yourself as a points, apply Gaussian kernel with (1:laplace, 2: gaussian, 8: flat )
-                new_radiuses = self.dataset.radiuses.copy()
 
-                gauss_distances = np.exp(-D_neighbours**deg / new_radiuses[self.dataset.labeled == 0].reshape(-1,1)**deg)
+                gauss_distances = np.exp(-D_neighbours**deg / self.new_radiuses[self.dataset.labeled == 0].reshape(-1,1)**deg)
                 use_self = True
 
                 if use_self:
@@ -167,37 +167,42 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                     # new_radiuses[self.dataset.labeled == 0] = (weights * self.dataset.radiuses[
                     #     self.dataset.queries[I_neighbours]]).sum(axis=1) + alpha * self.dataset.radiuses[
                     #                                               self.dataset.labeled == 0]
-                    new_radiuses[self.dataset.labeled == 0] = (weights * self.dataset.radiuses[
+                    self.new_radiuses[self.dataset.labeled == 0] = (weights * self.dataset.radiuses[
                         self.dataset.queries[I_neighbours]]).sum(axis=1) + alpha * self.radius
                 else:
                     alpha = 1 / 2
                     weights = gauss_distances / (gauss_distances.sum(axis=1).reshape(-1, 1))
 
-                    new_radiuses[self.dataset.labeled == 0] = alpha * (
+                    self.new_radiuses[self.dataset.labeled == 0] = alpha * (
                             weights * self.dataset.radiuses[self.dataset.queries[I_neighbours]]).sum(axis=1) + (
                                                                       1 - alpha) * self.dataset.radiuses[
                                                                   self.dataset.labeled == 0]
 
-                self.lims, self.D, self.I = update_adjacency_radius_faiss(self.dataset, new_radiuses, self.lims_ref,
-                                                                          self.D_ref, self.I_ref, self.lims, self.D,
-                                                                          self.I)
+            self.lims, self.D, self.I = update_adjacency_radius_faiss(self.dataset, self.new_radiuses, self.lims_ref,
+                                                                      self.D_ref, self.I_ref, self.lims, self.D,
+                                                                      self.I)
             # get the unlabeled point with highest out-degree
             out_degrees = self.lims[1:] - self.lims[:-1]
             if np.any(out_degrees > 0):
                 max_out_degree= np.max(out_degrees)
                 options = np.where(out_degrees*(self.dataset.labeled==0)==max_out_degree)[0]
                 n_options= len(options)
+                print(max_out_degree, n_options)
                 c_id= np.random.choice(options)
             else:
+                print("*")
                 c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
                 max_out_degree = 0
                 n_options = len(np.where(self.dataset.labeled == 0)[0])
 
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
 
-            self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
+            # self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
+            #                                                            self.I_ref, self.lims, self.D, self.I)
+            old_radiuses= self.new_radiuses.copy()
+            self.new_radiuses = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
                                                                        self.I_ref, self.lims, self.D, self.I)
-
+            self.dataset.observe(c_id)
         return max_out_degree, n_options
 
 

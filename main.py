@@ -95,6 +95,7 @@ def fetching_run(algorithm: "str", run_path):
         state= None
     return scores, queries, radiuses, degrees, options, state
 
+
 def simulate_random(run_path, dataset, dataset_test, args, eval_points= None):
     dataset.restart()
     scores=[]
@@ -116,7 +117,7 @@ def simulate_random(run_path, dataset, dataset_test, args, eval_points= None):
             saving_run("random", run_path, scores, dataset.queries)
     saving_run("random", run_path, scores, dataset.queries)
 
-@profile
+
 def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_points= None, plot=False):
     assert((algorithm=="pc") or (algorithm=="adpc"))
     reinitialize=False
@@ -223,7 +224,7 @@ if __name__ == "__main__":
                                     np.repeat(200,20), np.repeat(500, 10)))
         eval_freq = np.concatenate((np.repeat(1, 100), np.repeat(2, 50),
                                     np.repeat(5, 20), np.repeat(10, 20)))
-        # eval_freq = np.concatenate((np.repeat(1, 100), np.repeat(2, 50)))
+        eval_freq = np.concatenate((np.repeat(1, 100), np.repeat(2, 50)))
 
         if args.dataset=="cifar100":
             eval_freq= np.concatenate((eval_freq, np.repeat(500, 20)))
