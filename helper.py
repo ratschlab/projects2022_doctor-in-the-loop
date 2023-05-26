@@ -12,6 +12,7 @@ def adjacency_graph_faiss(x: np.array, initial_radius: float):
     return lims, D, I
 
 
+@profile
 def remove_incoming_edges_faiss(dataset, lims, D, I, query_idx=None):
     if len(dataset.queries) > 0:
         if query_idx is None:
@@ -36,6 +37,7 @@ def remove_incoming_edges_faiss(dataset, lims, D, I, query_idx=None):
     return lims, D, I
 
 
+@profile
 def update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref, lims, D, I):
     assert (len(dataset.radiuses) == len(new_radiuses))
     assert (lims_ref[-1] == D_ref.shape[0] == I_ref.shape[0])
@@ -54,6 +56,7 @@ def update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref,
     return lims, D, I
 
 
+@profile
 def reduce_intersected_balls_faiss(dataset, new_query_id, lims_ref, D_ref, I_ref, lims, D, I):
     rc = dataset.radiuses[new_query_id]
     if len(dataset.queries) > 0:

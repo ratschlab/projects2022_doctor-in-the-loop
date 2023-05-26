@@ -139,9 +139,11 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             self.dataset.observe(c_id)
             return max_out_degree, n_options
 
-    def adaptive_query(self, M, deg, K=3, B=1, n_initial=1):
+    @profile
+    def adaptive_query(self, M, deg, K=3, B=1, n_initial=1, reinitialize= False):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
-        self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
+        if len(self.dataset.queries)==0 or reinitialize:
+            self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
         for m in range(M):
             # Update initial radiuses using k-means
             # TODO: could also be optimized using old distances? but would require some sort function? might not be faster

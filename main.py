@@ -75,7 +75,7 @@ def saving_run(algorithm: "str", run_path, scores, queries, radiuses=None, degre
     pd.DataFrame({f'{algorithm}_queries': queries}).to_csv(f'{run_path}/{algorithm}_queries.csv')
     if algorithm == "pc" or algorithm == "adpc":
         pd.DataFrame({f'{algorithm}_degrees': degrees, f'{algorithm}_options': options}).to_csv(f'{run_path}/{algorithm}_degrees.csv')
-        pd.DataFrame({f'{algorithm}_radiuses': radiuses}).to_csv(f'{run_path}/{algorithm}_radiuses.csv')
+        np.save(f'{run_path}/{algorithm}_radiuses.npy', radiuses)
         state = np.random.get_state()
         with open(run_path + '/random_state.pickle', 'wb') as handle:
             pickle.dump(state, handle)
@@ -84,13 +84,14 @@ def fetching_run(algorithm: "str", run_path):
     scores = pd.read_csv(run_path + f"/{algorithm}_scores.csv", index_col=0)[f"{algorithm}_scores"].to_numpy()
     queries = pd.read_csv(run_path + f"/{algorithm}_queries.csv", index_col=0)[f"{algorithm}_queries"].to_numpy()
     if algorithm=="pc" or algorithm=="adpc":
-        radiuses = pd.read_csv(run_path + f"/{algorithm}_radiuses.csv", index_col=0)[f"{algorithm}_radiuses"].to_numpy()
+        # radiuses = pd.read_csv(run_path + f"/{algorithm}_radiuses.csv", index_col=0)[f"{algorithm}_radiuses"].to_numpy()
+        radiuses= np.load(f'{run_path}/{algorithm}_radiuses.npy')
         degrees = pd.read_csv(run_path + f"/{algorithm}_degrees.csv", index_col=0)[f"{algorithm}_degrees"].to_numpy()
         options = pd.read_csv(run_path + f"/{algorithm}_degrees.csv", index_col=0)[f"{algorithm}_options"].to_numpy()
         with open(run_path + '/random_state.pickle', 'rb') as handle:
             state = pickle.load(handle)
     else:
-        radiuses, degrees, options= [],[],[]
+        radiuses, degrees, options= None, None, None
         state= None
     return scores, queries, radiuses, degrees, options, state
 
@@ -113,12 +114,12 @@ def simulate_random(run_path, dataset, dataset_test, args, eval_points= None):
             scores.append(perf)
         if len(dataset.queries)%args.savefreq==0:
             saving_run("random", run_path, scores, dataset.queries)
+    saving_run("random", run_path, scores, dataset.queries)
 
-    return scores, dataset.queries
-
-
+@profile
 def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_points= None, plot=False):
     assert((algorithm=="pc") or (algorithm=="adpc"))
+    reinitialize=False
     dataset.restart()
     if args.warm_start:
         print("Fetching data and initializing dataset and learner for warm start")
@@ -126,6 +127,7 @@ def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_po
     else:
         print("Starting from scratch")
         scores, degrees, options= [], [], []
+        radiuses = np.empty(shape=(dataset.n_points, 0))
     scores, degrees, options = list(scores), list(degrees), list(options)
     n_classes = len(np.unique(dataset.y))
     clustering = MyKMeans(dataset, n_classes)
@@ -142,8 +144,9 @@ def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_po
             learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering, radius= args.radius)
             if args.warm_start:
                 dataset.observe(queries)
-                dataset.radiuses= radiuses
+                dataset.radiuses= radiuses[:,-1].squeeze()
                 np.random.set_state(state)
+                reinitialize= True
     elif algorithm=="pc":
         learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering)
         print(learner.radius)
@@ -153,7 +156,8 @@ def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_po
         if algorithm == "pc":
             deg, opt = learner.query(1)
         elif algorithm=="adpc":
-            deg, opt = learner.adaptive_query(1, K=args.neighbours_rad, deg= args.gauss)
+            deg, opt = learner.adaptive_query(1, K=args.neighbours_rad, deg= args.gauss, reinitialize=reinitialize)
+            reinitialize= False
         degrees.append(deg)
         options.append(opt)
         if plot and len(dataset.queries)%5==0 and len(dataset.queries)<=100:
@@ -167,23 +171,25 @@ def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_po
             model.fit(x_train, y_train)
             perf = model.score(x_test, y_test)
             scores.append(perf)
+            radiuses= np.concatenate((radiuses, dataset.radiuses.reshape(-1,1)), axis=1)
         if len(dataset.queries)%args.savefreq==0:
-            saving_run(algorithm, run_path, scores, dataset.queries, dataset.radiuses, degrees, options)
-    saving_run(algorithm, run_path, scores, dataset.queries, dataset.radiuses, degrees, options)
+            saving_run(algorithm, run_path, scores, dataset.queries, radiuses, degrees, options)
 
     state = np.random.get_state()
     with open(run_path + '/random_state.pickle', 'wb') as handle:
         pickle.dump(state, handle)
-    return scores, dataset.queries, dataset.radiuses, degrees, options
+    saving_run(algorithm, run_path, scores, dataset.queries, radiuses, degrees, options)
 
-def get_fullsup_accuracy(dataset, dataset_test):
+def simulate_fullsupervised(run_path, length, dataset, dataset_test):
     x_train, y_train = dataset.get_all_data()
     x_test, y_test = dataset_test.get_all_data()
 
     model = KNeighborsClassifier(1)
     model.fit(x_train, y_train)
     perf = model.score(x_test, y_test)
-    return perf
+
+    full_df = pd.DataFrame({'full_scores': np.repeat(perf, length)})
+    full_df.to_csv(f'{run_path}/full.csv')
 
 def get_data(dataset_name: str, args):
     if dataset_name=="clouds":
@@ -215,6 +221,9 @@ if __name__ == "__main__":
                                     np.repeat(5, 20), np.repeat(10, 20), np.repeat(20, 25),
                                    np.repeat(50, 20), np.repeat(100,40),
                                     np.repeat(200,20), np.repeat(500, 10)))
+        eval_freq = np.concatenate((np.repeat(1, 100), np.repeat(2, 50),
+                                    np.repeat(5, 20), np.repeat(10, 20)))
+        # eval_freq = np.concatenate((np.repeat(1, 100), np.repeat(2, 50)))
 
         if args.dataset=="cifar100":
             eval_freq= np.concatenate((eval_freq, np.repeat(500, 20)))
@@ -233,20 +242,18 @@ if __name__ == "__main__":
         start_time= time.time()
         # only needs to be run once per dataset (does not depend on gauss or radius)
         # Running and saving random sampling
-        random_scores, random_queries = simulate_random(run_path, dataset, dataset_test, args, eval_points)
+        simulate_random(run_path, dataset, dataset_test, args, eval_points)
         random_time = time.time()
         print(f"Random ran in {(random_time-start_time)/60} minutes")
 
         # Running and saving pc sampling
-        pc_scores, pc_queries, pc_radiuses, pc_degrees, pc_options = simulate_PC(run_path, "pc", dataset, dataset_test, args, eval_points)
+        simulate_PC(run_path, "pc", dataset, dataset_test, args, eval_points)
         pc_time= time.time()
         print(f"ProbCover ran in {(pc_time-random_time)/60} minutes")
 
         # Getting the full score
-        real_score = get_fullsup_accuracy(dataset, dataset_test)
+        real_score = simulate_fullsupervised(run_path, len(eval_points), dataset, dataset_test)
         final_time= time.time()
-        full_df = pd.DataFrame({'full_scores': np.repeat(real_score, len(pc_scores))})
-        full_df.to_csv(f'{run_path}/full.csv')
         print(f"Total run time {(final_time-start_time)/60} minutes")
 
         if args.dataset=="toy":
@@ -256,8 +263,7 @@ if __name__ == "__main__":
     elif args.radius>0:
         print("Running adaptive only")
         start_time=time.time()
-        adpc_scores,  adpc_queries, adpc_radiuses, adpc_degrees, adpc_options = simulate_PC(run_path, "adpc", dataset, dataset_test,
-                                                                                            args, eval_points)
+        simulate_PC(run_path, "adpc", dataset, dataset_test, args, eval_points)
         stop_time= time.time()
         print(f"Adaptive ProbCover ran in {(stop_time-start_time)/60} minutes")
     print("done")
