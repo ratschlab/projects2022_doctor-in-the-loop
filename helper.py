@@ -2,7 +2,34 @@ import faiss
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+from IPython import embed
 
+def get_cover(algorithm, dataset, lims_ref, D_ref, I_ref):
+    #get the percentage of datapoints within the radius of a labeled point
+    # Get all covered points
+    if algorithm=="pc":
+        covered = np.array([], dtype=int)
+        for u in dataset.queries:
+            # TODO: improve this
+            covered = np.concatenate((covered, I_ref[lims_ref[u]:lims_ref[u + 1]]), axis=0)
+        covered= np.concatenate((covered, dataset.queries), axis=0)
+        covered= np.unique(covered)
+    elif algorithm=="adpc":
+        R = np.repeat(dataset.radiuses, repeats=(lims_ref[1:] - lims_ref[:-1]).astype(int))
+        mask = D_ref < R ** 2
+        I_temp, D_temp = I_ref[mask], D_ref[mask]
+        mask_split = np.split(mask, lims_ref)[1:-1]
+        not_covered = np.array([np.invert(mask_split[u]).sum() for u in range(len(dataset.x))], dtype=int)
+        lims_temp= lims_ref.copy()
+        lims_temp[1:] = lims_ref[1:] - np.cumsum(not_covered)
+        covered = np.array([], dtype=int)
+        for u in dataset.queries:
+            # TODO: improve this
+            covered = np.concatenate((covered, I_temp[lims_temp[u]:lims_temp[u + 1]]), axis=0)
+        covered = np.concatenate((covered, dataset.queries), axis=0)
+        covered = np.unique(covered)
+
+    return len(covered)/dataset.n_points
 
 def adjacency_graph_faiss(x: np.array, initial_radius: float):
     n_features = x.shape[1]
@@ -48,10 +75,12 @@ def update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref,
         mask_split = np.split(mask, lims_ref)[1:-1]
         not_covered = np.array([np.invert(mask_split[u]).sum() for u in range(len(dataset.x))], dtype=int)
         lims[1:] = lims_ref[1:] - np.cumsum(not_covered)
-    lims, D, I = remove_incoming_edges_faiss(dataset, lims, D, I)
+    # Needs to be done even if we don't modify the radiuses
+        lims, D, I = remove_incoming_edges_faiss(dataset, lims, D, I)
 
     dataset.radiuses = new_radiuses
     return lims, D, I
+
 
 
 def reduce_intersected_balls_faiss(dataset, new_query_id, lims_ref, D_ref, I_ref, lims, D, I):
@@ -61,8 +90,7 @@ def reduce_intersected_balls_faiss(dataset, new_query_id, lims_ref, D_ref, I_ref
         diff_radiuses = dataset.radiuses[dataset.queries] + rc - dist_to_labeled
         new_radiuses = dataset.radiuses.copy()
         mask = (diff_radiuses > 0) * (dataset.y[new_query_id] != dataset.y[dataset.queries])
-        new_radiuses[dataset.queries[mask]] = \
-        np.maximum(0, 0.5 * (dataset.radiuses[dataset.queries] - rc + dist_to_labeled))[mask]
+        new_radiuses[dataset.queries[mask]] =  np.maximum(0, 0.5 * (dataset.radiuses[dataset.queries] - rc + dist_to_labeled))[mask]
 
         if mask.any():
             new_radiuses[new_query_id] = rc - 0.5 * np.max(diff_radiuses[mask])
@@ -70,12 +98,11 @@ def reduce_intersected_balls_faiss(dataset, new_query_id, lims_ref, D_ref, I_ref
     else:
         new_radiuses = dataset.radiuses
 
-    # dataset.observe(new_query_id, rc)
     # Update for changed radiuses and new observed point
-    # lims, D, I = update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref, lims, D, I)
+    lims, D, I = update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref, lims, D, I)
 
-    # return lims, D, I
-    return new_radiuses
+    return lims, D, I
+    # return new_radiuses
 
 
 def get_nn_faiss(x: np.array):
