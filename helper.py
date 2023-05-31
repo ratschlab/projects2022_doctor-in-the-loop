@@ -7,7 +7,7 @@ from IPython import embed
 def get_cover(algorithm, dataset, lims_ref, D_ref, I_ref):
     #get the percentage of datapoints within the radius of a labeled point
     # Get all covered points
-    if algorithm=="pc":
+    if algorithm=="pc" or algorithm=="coverpc":
         covered = np.array([], dtype=int)
         for u in dataset.queries:
             # TODO: improve this
@@ -75,7 +75,7 @@ def update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref,
         mask_split = np.split(mask, lims_ref)[1:-1]
         not_covered = np.array([np.invert(mask_split[u]).sum() for u in range(len(dataset.x))], dtype=int)
         lims[1:] = lims_ref[1:] - np.cumsum(not_covered)
-    # Needs to be done even if we don't modify the radiuses
+    # Needs to be done even if we don't modify the radiuses ??
         lims, D, I = remove_incoming_edges_faiss(dataset, lims, D, I)
 
     dataset.radiuses = new_radiuses

@@ -139,8 +139,37 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             self.dataset.observe(c_id)
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
         return max_out_degree, n_options
+    
+    def query_coverpc(self, M, reduce_radius= False, gamma= None, reinitialize=False):
+        # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
+        if len(self.dataset.queries)==0 or reinitialize:
+            self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
+        for _ in range(M):
+            # get the unlabeled point with highest out-degree
+            if reduce_radius:
+                # reduce radius for all queries to come
+                new_radiuses= self.dataset.radiuses.copy()
+                new_radiuses[self.labeled==0]= new_radiuses[self.labeled==0]*gamma
+                # update lims, D, I using the new radius
+                self.lims, self.D, self.I= update_adjacency_radius_faiss(self.dataset, new_radiuses, 
+                                                                         self.lims_ref, self.D_ref, self.I_ref, 
+                                                                         self.lims, self.D, self.I)
+            out_degrees = self.lims[1:] - self.lims[:-1]
+            if np.any(out_degrees > 0):
+                max_out_degree= np.max(out_degrees)
+                options = np.where(out_degrees*(self.dataset.labeled==0)==max_out_degree)[0]
+                n_options= len(options)
+                c_id= np.random.choice(options)
+            else:
+                c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
+                max_out_degree= 0
+                n_options= len(np.where(self.dataset.labeled == 0)[0])
+            # Remove all incoming edges to the points covered by c_id
+            self.dataset.observe(c_id)
+            self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
+        return max_out_degree, n_options
 
-    def adaptive_query(self, M, deg, K=3, B=1, n_initial=1, reinitialize=False):
+    def adaptive_query(self, M, deg, K=5, reinitialize=False):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if len(self.dataset.queries)==0 or reinitialize:
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
@@ -155,6 +184,8 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                 n_neighbours = K if len(self.dataset.queries) >= K else len(self.dataset.queries)
                 D_neighbours, I_neighbours = index_knn.search(
                     self.dataset.x[self.dataset.labeled == 0].astype("float32"), n_neighbours)  # find K-nn for all
+                
+                D_neighbours= np.sqrt(D_neighbours)
                 # set new radiuses as a weighted radius of the labeled K-nn (for all non labeled points)
                 # TODO: weigh this as inverse of distances but can cause issue, use yourself as a points, apply Gaussian kernel with (1:laplace, 2: gaussian, 8: flat )
                 self.new_radiuses = self.dataset.radiuses.copy()
@@ -162,7 +193,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                 gauss_distances = np.exp(
                     -D_neighbours ** deg / self.new_radiuses[self.dataset.labeled == 0].reshape(-1, 1) ** deg)
                 use_self = True
-
+        
                 if use_self:
                     norm = (gauss_distances.sum(axis=1, keepdims=True) + 1)
                     alpha = (1 / norm)[:, 0]
