@@ -31,7 +31,7 @@ def build_parser():
     parser.add_argument('--dataset', type= str, required= True,
                         help='"cifar10" or "cifar100" or "toy"')
     parser.add_argument('--radius', type=float, required=True,
-                        help="initial radius for the adaptive probcover")
+                        help="initial radius, if equal to 0 the radius will be initialized using kmeans and the default purity threshold")
     parser.add_argument('--run', type=str, required=False, default="runs",
                         help='folder name to save the run')
     parser.add_argument('--sd', type=int, default=None, required=True,
@@ -41,7 +41,7 @@ def build_parser():
 
     ### parameters to set for cifar experiments ###
     parser.add_argument('--algorithm', type=str, required=True,
-                        help="Wether to run 'benchmark', 'adpc' or 'coverpc'")
+                        help="Wether to run 'benchmark', 'adpc', 'pc' or 'coverpc'")
     parser.add_argument('--warm_start', type= str2bool, default= False)
 
     ### extra parameters to set for cover-based PC method ###

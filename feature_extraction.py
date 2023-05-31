@@ -76,7 +76,7 @@ if __name__ == "__main__":
     train_loader = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, shuffle=False)
     test_loader = torch.utils.data.DataLoader(dataset_test, batch_size=args.batch_size, shuffle=False)
 
-    run_path= f"./data/new_transform/normalized/{args.dataset}/{args.n_epochs}epochs"
+    run_path= f"./data/scan-simclr-resnet18/{args.dataset}/{args.n_epochs}epochs"
 
     if not os.path.exists(run_path):
         os.makedirs(run_path)

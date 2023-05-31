@@ -140,34 +140,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
         return max_out_degree, n_options
     
-    def query_coverpc(self, M, reduce_radius= False, gamma= None, reinitialize=False):
-        # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
-        if len(self.dataset.queries)==0 or reinitialize:
-            self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
-        for _ in range(M):
-            # get the unlabeled point with highest out-degree
-            if reduce_radius:
-                # reduce radius for all queries to come
-                new_radiuses= self.dataset.radiuses.copy()
-                new_radiuses[self.labeled==0]= new_radiuses[self.labeled==0]*gamma
-                # update lims, D, I using the new radius
-                self.lims, self.D, self.I= update_adjacency_radius_faiss(self.dataset, new_radiuses, 
-                                                                         self.lims_ref, self.D_ref, self.I_ref, 
-                                                                         self.lims, self.D, self.I)
-            out_degrees = self.lims[1:] - self.lims[:-1]
-            if np.any(out_degrees > 0):
-                max_out_degree= np.max(out_degrees)
-                options = np.where(out_degrees*(self.dataset.labeled==0)==max_out_degree)[0]
-                n_options= len(options)
-                c_id= np.random.choice(options)
-            else:
-                c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
-                max_out_degree= 0
-                n_options= len(np.where(self.dataset.labeled == 0)[0])
-            # Remove all incoming edges to the points covered by c_id
-            self.dataset.observe(c_id)
-            self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
-        return max_out_degree, n_options
 
     def adaptive_query(self, M, deg, K=5, reinitialize=False):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)

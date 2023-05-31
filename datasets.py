@@ -233,7 +233,6 @@ class CIFAR_simclr(ActiveDataset):
         self.train= train
         self.normalized= normalized
         n_points= 50000 if self.train else 10000
-        # self.path = f"./data/normalized/{self.dataset}/{self.n_epochs}epochs/"
         self.path = f"./data/scan-simclr-resnet18/{self.dataset}/{self.n_epochs}epochs/"
         super(CIFAR_simclr, self).__init__(n_points, random_state)
 
