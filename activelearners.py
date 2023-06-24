@@ -7,9 +7,11 @@ import seaborn as sns
 from clustering import ClusteringAlgo
 from helper import get_radius_faiss, adjacency_graph_faiss, remove_incoming_edges_faiss, update_adjacency_radius_faiss, \
     reduce_intersected_balls_faiss, get_knn_weighted_radiuses
-from helper import shift_covering_centroids
+from helper import shift_covering_centroids, reduce_all_interesected_balls_faiss
 from sklearn.cluster import KMeans
 from metrics import kl_divergence
+from helper import get_cover
+
 from IPython import embed
 
 class ActiveLearner:
@@ -73,7 +75,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                  plot=[False, False],
                  search_range=[0, 1.0], search_step=0.01,
                  radius= None,
-                 adaptive=False,
                  model=None):
 
         super().__init__(dataset, model)
@@ -101,7 +102,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         # Initialize the graph
         self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
         self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
-        self.adaptive = adaptive
         self.dataset.radiuses = np.repeat(self.radius, len(self.dataset.x))
 
     def update_radius(self, new_radius):
@@ -112,14 +112,11 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
 
     def update_labeled(self, plot_clustering=False):
-        if self.adaptive == False:
-            raise ValueError("This active learner's radius and pseudo-labels are not adaptive")
+
         self.clustering.fit_labeled(self.dataset.queries)
         self.pseudo_labels = self.clustering.pseudo_labels
-        self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, [0, 10], 0.01)
-        self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
-        if plot_clustering:
-            self.clustering.plot()
+        new_radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, [0, 10], 0.01)
+        self.update_radius(new_radius)
 
     def get_highest_out_degree(self):
         out_degrees = self.lims[1:] - self.lims[:-1]
@@ -134,14 +131,14 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             n_options= len(np.where(self.dataset.labeled == 0)[0])
         return c_id, n_options, max_out_degree
     
-    def query(self, M, B=1, n_initial=1, reinitialize=False, hard_threshold= 0.0):
+    def query(self, M, args, reinitialize=False):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if len(self.dataset.queries)==0 or reinitialize:
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
         for _ in range(M):    
-            if hard_threshold>0:
+            if args.hard_threshold>0:
                 new_radiuses= self.dataset.radiuses.copy()
-                new_radiuses[new_radiuses<= hard_threshold]= hard_threshold
+                new_radiuses[new_radiuses<= args.hard_threshold]= args.hard_threshold
                 self.lims, self.D, self.I= update_adjacency_radius_faiss(self.dataset, new_radiuses, 
                                                                          self.lims_ref, self.D_ref, self.I_ref, 
                                                                          self.lims, self.D, self.I)            
@@ -152,7 +149,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
         return max_out_degree, n_options
 
-    def adaptive_query(self, M, deg, K=5, gamma= 0.5, reduction_method="pessimistic", reinitialize=False, hard_threshold= 0.0):
+    def adaptive_query(self, M, args, reinitialize=False):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if len(self.dataset.queries)==0 or reinitialize:
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
@@ -160,9 +157,9 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         for _ in range(M):
             # Update initial radiuses using some weighted average of the radiuses of the knn 
             if len(self.dataset.queries) > 0:
-                new_radiuses= get_knn_weighted_radiuses(self.dataset, K, deg, self.radius)
-                if hard_threshold>0:
-                    new_radiuses[new_radiuses<= hard_threshold]= hard_threshold
+                new_radiuses= get_knn_weighted_radiuses(self.dataset, args.K, args.gauss, self.radius)
+                if args.hard_threshold>0:
+                    new_radiuses[new_radiuses<= args.hard_threshold]= args.hard_threshold
 
                 self.lims, self.D, self.I = update_adjacency_radius_faiss(self.dataset, new_radiuses, self.lims_ref,
                                                                           self.D_ref, self.I_ref, self.lims, self.D,
@@ -174,15 +171,68 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
             self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
                                                                        self.I_ref, self.lims, self.D, self.I,
-                                                                       gamma, reduction_method)
+                                                                       args.gamma, args.reduction_method)
             
-            if hard_threshold>0:
-                self.dataset.radiuses[self.dataset.radiuses<= hard_threshold]= hard_threshold
+            if args.hard_threshold>0:
+                self.dataset.radiuses[self.dataset.radiuses<= args.hard_threshold]= args.hard_threshold
             self.dataset.observe(c_id, self.dataset.radiuses[c_id])
 
         return max_out_degree, n_options
     
+    def coverpc_query(self, M, args, reinitialize=False):
+        if len(self.dataset.queries)==0 or reinitialize:
+            self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
 
+        for _ in range(M):
+            cover= get_cover("coverpc", self.dataset, self.lims_ref, self.D_ref, self.I_ref)
+            if cover < args.cover_threshold:
+                # sample without reducing radiuses
+                max_out_degree, n_options = self.query(1, args)
+            elif cover >= args.cover_threshold:
+                # reduce the radius until cover condition is no longer satisfied
+                print(f"Reducing the radius until the cover >= {args.cover_threshold} is no longer satisfied")
+                while cover >= args.cover_threshold:
+                    self.update_radius(self.radius*args.eps)
+                print(f"New radius is {self.radius}")
+
+                # query a point with this new radius
+                max_out_degree, n_options= self.query(1, args)
+
+        return max_out_degree, n_options
+    
+    def partialadpc_query(self, M, args, current_threshold, reinitialize= False):
+        thresholds= np.arange(0.1, 0.85, 0.05)
+        if len(self.dataset.queries)==0:
+            self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
+        
+        for _ in range(M):
+            cover= get_cover("partialadpc", self.dataset, self.lims_ref, self.D_ref, self.I_ref)     
+            
+            if cover < current_threshold:
+                # sample without reducing radiuses
+                max_out_degree, n_options = self.query(1, args)
+            elif cover >= current_threshold:
+                print("reducing the radiuses for intersections")
+                # reduce the intersection
+                self.lims, self.D, self.I = reduce_all_interesected_balls_faiss(self.dataset, self.lims_ref, self.D_ref, self.I_ref, 
+                                                                                self.lims, self.D, self.I)
+                # get the query using knn and intersection updated radiuses
+                if len(self.dataset.queries) > 0:
+                    new_radiuses= get_knn_weighted_radiuses(self.dataset, args.K, args.gauss, args.radius)
+                    self.lims, self.D, self.I = update_adjacency_radius_faiss(self.dataset, new_radiuses, 
+                                                                            self.lims_ref, self.D_ref, self.I_ref, 
+                                                                            self.lims, self.D, self.I)
+                c_id, n_options, max_out_degree = self.get_highest_out_degree()
+
+                # observe but don't reduce for intersections
+                self.dataset.observe(c_id, self.dataset.radiuses[c_id])
+                self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
+                                                                    
+                # update the next threshold that will do the update
+                i = np.where(thresholds==current_threshold)[0]
+                current_threshold= thresholds[i+1]
+        return max_out_degree, n_options, current_threshold 
+        
 
 class ShiftedProbCoverSampler(ProbCoverSampler_Faiss):
     def __init__(self, dataset, purity_threshold,
@@ -190,12 +240,11 @@ class ShiftedProbCoverSampler(ProbCoverSampler_Faiss):
                  plot=[False, False],
                  search_range=[0, 1.0], search_step=0.01,
                  radius= None,
-                 adaptive=False,
                  model=None):
 
         super().__init__(dataset, purity_threshold, clustering, plot,
                          search_range, search_step,
-                         radius, adaptive, model)
+                         radius, model)
         
         #initialize the centroids associated to each query as the query itself
         self.centroids= self.dataset.x
