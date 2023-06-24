@@ -66,8 +66,6 @@ def build_parser():
                         help="std of clusters")
     parser.add_argument('--n_points', type= int, default= 1000,
                         help="number of points per class")
-    parser.add_argument('--dilat', type= float, default= 1,
-                        help= 'multiplicative term to drive the cluster centers further apart')
 
     ### default parameters for all runs ####
     parser.add_argument('--gauss', type=int, required=False, default=4,
@@ -76,7 +74,7 @@ def build_parser():
                         help="purity threshold")
     parser.add_argument('--savefreq', type=float, default=100,
                         help="how often to save the progress")
-    parser.add_argument('--neighbours_rad', type=int, default= 5,
+    parser.add_argument('--K', type=int, default= 5,
                         help="number of neighbours for radius update using Knn average")
 
     return parser
@@ -128,9 +126,8 @@ def simulate_random(run_path, dataset, dataset_test, args, eval_points):
             saving_run("random", run_path, scores, dataset.queries)
     saving_run("random", run_path, scores, dataset.queries)
 
-
 def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_points, plot=False):
-    assert(algorithm in ["pc" ,"adpc", "partialadpc"])
+    assert(algorithm in ["pc" ,"adpc", "partialadpc", "coverpc"])
     reinitialize=False
     dataset.restart()
     if args.warm_start:
@@ -140,10 +137,13 @@ def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_po
         print("Starting from scratch")
         scores, degrees, options, covers= [], [], [], []
         radiuses = np.empty(shape=(dataset.n_points, 0))
+
     scores, degrees, options, covers = list(scores), list(degrees), list(options), list(covers)
     n_classes = len(np.unique(dataset.y))
     clustering = MyKMeans(dataset, n_classes)
-
+    if algorithm=="partialadpc":
+        current_threshold= 0.1
+   
     if args.radius==0:
         # Initialize the radius as in original Probcover
         learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering)
@@ -159,18 +159,22 @@ def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_po
     while len(dataset.queries)< eval_points.max():
         # Query new points
         if algorithm == "pc":
-            deg, opt = learner.query(1, reinitialize= reinitialize, hard_threshold= args.hard_threshold)
+            deg, opt = learner.query(1, args, reinitialize= reinitialize)
         elif algorithm=="adpc":
-            deg, opt = learner.adaptive_query(1, K=args.neighbours_rad, deg= args.gauss, 
-                                              gamma= args.gamma, reduction_method= args.reduction_method,
-                                              reinitialize=reinitialize, hard_threshold= args.hard_threshold)
-                   
+            deg, opt = learner.adpc_query(1, args, reinitialize=reinitialize)
+        elif algorithm== "coverpc":
+            deg, opt = learner.coverpc_query(1, args, reinitialize= reinitialize)
+        elif algorithm == "partialadpc":
+            deg, opt, current_threshold = learner.partialadpc_query(1, args, current_threshold, reinitialize= reinitialize)
+
         reinitialize= False
         degrees.append(deg)
         options.append(opt)
 
+
         if plot and len(dataset.queries)%5==0 and len(dataset.queries)<=100:
             dataset.plot_al(True) 
+  
         if len(dataset.queries) in eval_points:
             cover= get_cover(algorithm, dataset, learner.lims_ref, learner.D_ref, learner.I_ref)
             covers.append(cover)
@@ -192,146 +196,6 @@ def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_po
     saving_run(algorithm, run_path, scores, dataset.queries, radiuses, degrees, options, covers)
 
 
-######################################################
-
-def simulate_partialADPC(run_path, algorithm: "str", dataset, dataset_test, args, eval_points, plot=False):
-    dataset.restart()
-    print("Starting from scratch")
-    scores, degrees, options, covers= [], [], [], []
-    radiuses = np.empty(shape=(dataset.n_points, 0))
-    scores, degrees, options, covers = list(scores), list(degrees), list(options), list(covers)
-    n_classes = len(np.unique(dataset.y))
-    clustering = MyKMeans(dataset, n_classes)
-
-    if args.radius==0:
-        # Initialize the radius as in original Probcover
-        learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering)
-    elif args.radius>0:
-        learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering, radius= args.radius)
-
-    thresholds= np.arange(0.1, 0.85, 0.05)
-    i=0
-    
-    while len(dataset.queries)< eval_points.max():
-        if len(dataset.queries)==0:
-            learner.lims, learner.D, learner.I = remove_incoming_edges_faiss(dataset, learner.lims, learner.D, learner.I)
-            cover=0
-        
-        if cover < thresholds[i]:
-            # sample without reducing radiuses
-            deg, opt = learner.query(1)
-        elif cover >= thresholds[i]:
-            print("reducing the radiuses for intersections")
-            # reduce the intersection
-            learner.lims, learner.D, learner.I = reduce_all_interesected_balls_faiss(dataset, 
-                                                                                     learner.lims_ref, learner.D_ref, learner.I_ref, 
-                                                                                     learner.lims, learner.D, learner.I)
-            # get the query using knn and intersection updated radiuses
-            if len(dataset.queries) > 0:
-                new_radiuses= get_knn_weighted_radiuses(dataset,args.neighbours_rad, args.gauss, args.radius)
-                learner.lims, learner.D, learner.I = update_adjacency_radius_faiss(learner.dataset, new_radiuses, learner.lims_ref,
-                                                                          learner.D_ref, learner.I_ref, learner.lims, learner.D,
-                                                                          learner.I)
-            c_id, opt, deg = learner.get_highest_out_degree()
-
-            # observe but don't reduce for intersections
-            dataset.observe(c_id, dataset.radiuses[c_id])
-            learner.lims, learner.D, learner.I = remove_incoming_edges_faiss(dataset, learner.lims, learner.D, learner.I, c_id)
-                                                                   
-            # update the next threshold that will do the update
-            i+=1
-                   
-        degrees.append(deg)
-        options.append(opt)
-        cover= get_cover("partialadpc", dataset, learner.lims_ref, learner.D_ref, learner.I_ref)
-
-
-        if plot and len(dataset.queries)%5==0 and len(dataset.queries)<=100:
-            dataset.plot_al(True) 
-
-        if len(dataset.queries) in eval_points:
-            covers.append(cover)
-            print(len(dataset.queries), dataset.queries[-1], cover*100)
-            x_train, y_train = dataset.get_labeled_data()
-            x_test, y_test = dataset_test.get_all_data()
-            model = KNeighborsClassifier(1)
-            model.fit(x_train, y_train)
-            perf = model.score(x_test, y_test)
-            scores.append(perf)
-            radiuses= np.concatenate((radiuses, dataset.radiuses.reshape(-1,1)), axis=1)
-        if len(dataset.queries)%args.savefreq==0:
-            saving_run(algorithm, run_path, scores, dataset.queries, radiuses, degrees, options, covers)
-
-
-    state = np.random.get_state()
-    with open(run_path + f"/random_state_{algorithm}.pickle", 'wb') as handle:
-        pickle.dump(state, handle)
-    saving_run(algorithm, run_path, scores, dataset.queries, radiuses, degrees, options, covers)
-
-
-
-def simulate_coverpc(run_path, algorithm: "str", dataset, dataset_test, args, eval_points, plot=False):
-    dataset.restart()
-    print("Starting from scratch")
-    scores, degrees, options, covers= [], [], [], []
-    radiuses = np.empty(shape=(dataset.n_points, 0))
-    scores, degrees, options, covers = list(scores), list(degrees), list(options), list(covers)
-    n_classes = len(np.unique(dataset.y))
-    clustering = MyKMeans(dataset, n_classes)
-
-    if args.radius==0:
-        # Initialize the radius as in original Probcover
-        learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering)
-    elif args.radius>0:
-        learner = ProbCoverSampler_Faiss(dataset, args.tsh, clustering, radius= args.radius)
-
-    while len(dataset.queries)< eval_points.max():
-        if len(dataset.queries)==0:
-            learner.lims, learner.D, learner.I = remove_incoming_edges_faiss(dataset, learner.lims, learner.D, learner.I)
-            cover=0
-        
-        if cover < args.cover_threshold:
-            # sample without reducing radiuses
-            deg, opt = learner.query(1)
-        elif cover >= args.cover_threshold:
-            # reduce the radius until cover condition is no longer satisfied
-            print(f"Reducing the radius until the cover >= {args.cover_threshold} is no longer satisfied")
-            while cover >= args.cover_threshold:
-                learner.update_radius(learner.radius*args.eps)
-                cover= get_cover("coverpc", dataset, learner.lims_ref, learner.D_ref, learner.I_ref)
-            print(f"New radius is {learner.radius}")
-
-            # query a point with this new radius
-            deg, opt= learner.query(1)
-                   
-        degrees.append(deg)
-        options.append(opt)
-
-        cover= get_cover("coverpc", dataset, learner.lims_ref, learner.D_ref, learner.I_ref)
-
-
-        if plot and len(dataset.queries)%5==0 and len(dataset.queries)<=100:
-            dataset.plot_al(True) 
-
-        if len(dataset.queries) in eval_points:
-            covers.append(cover)
-            print(len(dataset.queries), dataset.queries[-1], cover*100)
-            x_train, y_train = dataset.get_labeled_data()
-            x_test, y_test = dataset_test.get_all_data()
-            model = KNeighborsClassifier(1)
-            model.fit(x_train, y_train)
-            perf = model.score(x_test, y_test)
-            scores.append(perf)
-            radiuses= np.concatenate((radiuses, dataset.radiuses.reshape(-1,1)), axis=1)
-        if len(dataset.queries)%args.savefreq==0:
-            saving_run(algorithm, run_path, scores, dataset.queries, radiuses, degrees, options, covers)
-
-
-    state = np.random.get_state()
-    with open(run_path + f"/random_state_{algorithm}.pickle", 'wb') as handle:
-        pickle.dump(state, handle)
-    saving_run(algorithm, run_path, scores, dataset.queries, radiuses, degrees, options, covers)
-
 def simulate_fullsupervised(run_path, length, dataset, dataset_test):
     x_train, y_train = dataset.get_all_data()
     x_test, y_test = dataset_test.get_all_data()
@@ -346,7 +210,7 @@ def simulate_fullsupervised(run_path, length, dataset, dataset_test):
 def get_data(args):
     if args.dataset=="toy":
         cluster_centers = [[0.5, 2], [1.5, 2], [3, 2.5], [3, 5], [5, 3], [5, 2], [3, 4], [4.5, 4.5], [1.5, 3.5], [0, 4]]
-        cluster_centers = np.array(cluster_centers) * args.dilat
+        cluster_centers = np.array(cluster_centers)
         cluster_std = np.repeat(args.std, len(cluster_centers))
         cluster_samples = np.repeat(args.n_points, len(cluster_centers))
 
@@ -365,7 +229,7 @@ def get_data(args):
             run_path= f"./{args.run}/{args.dataset}/{args.n_epochs}_{args.gauss}_{args.radius}_{args.hard_threshold}_gamma{args.gamma}_{args.reduction_method}_{args.sd}"
         elif args.algorithm =="partialadpc": 
             run_path= f"./{args.run}/{args.dataset}/{args.n_epochs}_{args.gauss}_{args.radius}_{args.hard_threshold}_{args.sd}"
-        elif args.algorithm == "pc":
+        elif args.algorithm == "pc" or "spectralpc":
             run_path= f"./{args.run}/{args.dataset}/{args.n_epochs}_{args.gauss}_{args.radius}_{args.hard_threshold}_{args.sd}"
         elif args.algorithm == "coverpc":
             run_path= f"./{args.run}/{args.dataset}/{args.n_epochs}_{args.gauss}_{args.radius}_{args.hard_threshold}_eps{args.eps}_cover{args.cover_threshold}_{args.sd}"
@@ -401,23 +265,12 @@ if __name__ == "__main__":
         assert(args.radius==0.0)
         simulate_random(run_path, dataset, dataset_test, args, eval_points)
         simulate_fullsupervised(run_path, len(eval_points), dataset, dataset_test)
-    elif args.algorithm=="pc":
-        print("Running pc only")
+    elif args.algorithm in ["pc", "adpc", "partialadpc", "coverpc"]:
+        print(f"Running {args.algorithm} only")
         start_time= time.time()
-        # Running and saving pc sampling
-        simulate_PC(run_path, "pc", dataset, dataset_test, args, eval_points)
+        simulate_PC(run_path, args.algorithm, dataset, dataset_test, args, eval_points)
         pc_time= time.time()
-        print(f"ProbCover ran in {(pc_time-start_time)/60} minutes")
-    elif args.algorithm=="adpc":
-        print("Running adaptive only")
-        start_time=time.time()
-        simulate_PC(run_path, "adpc", dataset, dataset_test, args, eval_points)
-        stop_time= time.time()
-        print(f"Adaptive ProbCover ran in {(stop_time-start_time)/60} minutes")
-    elif args.algorithm== "partialadpc":
-        simulate_partialADPC(run_path, "partialadpc", dataset, dataset_test, args, eval_points)
-    elif args.algorithm== "coverpc":
-        simulate_coverpc(run_path, "coverpc", dataset, dataset_test, args, eval_points)
+        print(f"{args.algorithm} ran in {(pc_time-start_time)/60} minutes")
     if args.dataset == "toy":
         dataset.plot_dataset(save=True, path=f'{run_path}/train.png')
         dataset_test.plot_dataset(save=True, path=f'{run_path}/test.png')
