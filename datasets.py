@@ -15,6 +15,7 @@ class ActiveDataset:
             np.random.seed(self.random_state)
         self.x, self.y = self.generate_data()
         self.d= self.x.shape[1]
+        self.C = len(np.unique(self.y))
         if self.random_state is not None:
             np.random.set_state(state)
 

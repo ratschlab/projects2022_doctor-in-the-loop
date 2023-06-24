@@ -6,7 +6,8 @@ import seaborn as sns
 
 from clustering import ClusteringAlgo
 from helper import get_radius_faiss, adjacency_graph_faiss, remove_incoming_edges_faiss, update_adjacency_radius_faiss, \
-    reduce_intersected_balls_faiss
+    reduce_intersected_balls_faiss, get_knn_weighted_radiuses
+from helper import shift_covering_centroids
 from sklearn.cluster import KMeans
 from metrics import kl_divergence
 from IPython import embed
@@ -107,6 +108,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.radius = new_radius
         self.dataset.radiuses = np.repeat(self.radius, len(self.dataset.x))
         self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
+        self.lims_ref, self.D_ref, self.I_ref  = remove_incoming_edges_faiss(self.dataset, self.lims_ref, self.D_ref, self.I_ref)
         self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
 
     def update_labeled(self, plot_clustering=False):
@@ -119,103 +121,123 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         if plot_clustering:
             self.clustering.plot()
 
-    def query(self, M, B=1, n_initial=1, reinitialize=False):
+    def get_highest_out_degree(self):
+        out_degrees = self.lims[1:] - self.lims[:-1]
+        if np.any(out_degrees > 0):
+            max_out_degree= np.max(out_degrees)
+            options = np.where(out_degrees*(self.dataset.labeled==0)==max_out_degree)[0]
+            n_options= len(options)
+            c_id= np.random.choice(options)
+        else:
+            c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
+            max_out_degree= 0
+            n_options= len(np.where(self.dataset.labeled == 0)[0])
+        return c_id, n_options, max_out_degree
+    
+    def query(self, M, B=1, n_initial=1, reinitialize=False, hard_threshold= 0.0):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if len(self.dataset.queries)==0 or reinitialize:
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
-        for _ in range(M):
+        for _ in range(M):    
+            if hard_threshold>0:
+                new_radiuses= self.dataset.radiuses.copy()
+                new_radiuses[new_radiuses<= hard_threshold]= hard_threshold
+                self.lims, self.D, self.I= update_adjacency_radius_faiss(self.dataset, new_radiuses, 
+                                                                         self.lims_ref, self.D_ref, self.I_ref, 
+                                                                         self.lims, self.D, self.I)            
             # get the unlabeled point with highest out-degree
-            out_degrees = self.lims[1:] - self.lims[:-1]
-            if np.any(out_degrees > 0):
-                max_out_degree= np.max(out_degrees)
-                options = np.where(out_degrees*(self.dataset.labeled==0)==max_out_degree)[0]
-                n_options= len(options)
-                c_id= np.random.choice(options)
-            else:
-                c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
-                max_out_degree= 0
-                n_options= len(np.where(self.dataset.labeled == 0)[0])
+            c_id, n_options, max_out_degree = self.get_highest_out_degree()
             # Remove all incoming edges to the points covered by c_id
             self.dataset.observe(c_id)
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
         return max_out_degree, n_options
-    
 
-    def adaptive_query(self, M, deg, K=5, reinitialize=False):
+    def adaptive_query(self, M, deg, K=5, gamma= 0.5, reduction_method="pessimistic", reinitialize=False, hard_threshold= 0.0):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if len(self.dataset.queries)==0 or reinitialize:
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
-            # self.new_radiuses = self.dataset.radiuses.copy()
 
-        for m in range(M):
-            # Update initial radiuses using k-means
-            # TODO: could also be optimized using old distances? but would require some sort function? might not be faster
+        for _ in range(M):
+            # Update initial radiuses using some weighted average of the radiuses of the knn 
             if len(self.dataset.queries) > 0:
-                index_knn = faiss.IndexFlatL2(self.dataset.d)  # build the index
-                index_knn.add(self.dataset.x[self.dataset.queries].astype("float32"))  # fit it to the labeled data
-                n_neighbours = K if len(self.dataset.queries) >= K else len(self.dataset.queries)
-                D_neighbours, I_neighbours = index_knn.search(
-                    self.dataset.x[self.dataset.labeled == 0].astype("float32"), n_neighbours)  # find K-nn for all
-                
-                D_neighbours= np.sqrt(D_neighbours)
-                # set new radiuses as a weighted radius of the labeled K-nn (for all non labeled points)
-                # TODO: weigh this as inverse of distances but can cause issue, use yourself as a points, apply Gaussian kernel with (1:laplace, 2: gaussian, 8: flat )
-                self.new_radiuses = self.dataset.radiuses.copy()
+                new_radiuses= get_knn_weighted_radiuses(self.dataset, K, deg, self.radius)
+                if hard_threshold>0:
+                    new_radiuses[new_radiuses<= hard_threshold]= hard_threshold
 
-                gauss_distances = np.exp(
-                    -D_neighbours ** deg / self.new_radiuses[self.dataset.labeled == 0].reshape(-1, 1) ** deg)
-                use_self = True
-        
-                if use_self:
-                    norm = (gauss_distances.sum(axis=1, keepdims=True) + 1)
-                    alpha = (1 / norm)[:, 0]
-                    weights = gauss_distances / norm
-
-                    self.new_radiuses[self.dataset.labeled == 0] = (weights * self.dataset.radiuses[
-                        self.dataset.queries[I_neighbours]]).sum(axis=1) + alpha * self.radius
-                else:
-                    alpha = 1 / 2
-                    weights = gauss_distances / (gauss_distances.sum(axis=1).reshape(-1, 1))
-
-                    self.new_radiuses[self.dataset.labeled == 0] = alpha * (
-                            weights * self.dataset.radiuses[self.dataset.queries[I_neighbours]]).sum(axis=1) + (
-                                                                      1 - alpha) * self.dataset.radiuses[
-                                                                  self.dataset.labeled == 0]
-
-                self.lims, self.D, self.I = update_adjacency_radius_faiss(self.dataset, self.new_radiuses, self.lims_ref,
+                self.lims, self.D, self.I = update_adjacency_radius_faiss(self.dataset, new_radiuses, self.lims_ref,
                                                                           self.D_ref, self.I_ref, self.lims, self.D,
                                                                           self.I)
+            
             # get the unlabeled point with highest out-degree
-            out_degrees = self.lims[1:] - self.lims[:-1]
-            if np.any(out_degrees > 0):
-                max_out_degree = np.max(out_degrees)
-                options = np.where(out_degrees * (self.dataset.labeled == 0) == max_out_degree)[0]
-                n_options = len(options)
-                if n_options==0:
-                    embed()
-                c_id = np.random.choice(options)
-            else:
-                c_id = np.random.choice(np.where(self.dataset.labeled == 0)[0])
-                max_out_degree = 0
-                n_options = len(np.where(self.dataset.labeled == 0)[0])
+            c_id, n_options, max_out_degree = self.get_highest_out_degree()
 
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
-
             self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
-                                                                       self.I_ref, self.lims, self.D, self.I)
-            #self.new_radiuses = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
-            #                                                            self.I_ref, self.lims, self.D, self.I)
-
+                                                                       self.I_ref, self.lims, self.D, self.I,
+                                                                       gamma, reduction_method)
+            
+            if hard_threshold>0:
+                self.dataset.radiuses[self.dataset.radiuses<= hard_threshold]= hard_threshold
             self.dataset.observe(c_id, self.dataset.radiuses[c_id])
+
+        return max_out_degree, n_options
+    
+
+
+class ShiftedProbCoverSampler(ProbCoverSampler_Faiss):
+    def __init__(self, dataset, purity_threshold,
+                 clustering: ClusteringAlgo,
+                 plot=[False, False],
+                 search_range=[0, 1.0], search_step=0.01,
+                 radius= None,
+                 adaptive=False,
+                 model=None):
+
+        super().__init__(dataset, purity_threshold, clustering, plot,
+                         search_range, search_step,
+                         radius, adaptive, model)
+        
+        #initialize the centroids associated to each query as the query itself
+        self.centroids= self.dataset.x
+        #self.lims, self.D, self.I represent the graph associated with the centroids
+        #self.lims, self.D, self.I represent the graph associated with the original points
+        self.class_centroids= np.empty(shape=(self.dataset.n_classes, self.dataset.d))
+
+    def update_class_centroids(self, new_query_id):
+        c = self.dataset.y[new_query_id]
+        n_observed_c= ((self.dataset.labeled==1)*(self.dataset.y==c)).sum()
+        self.class_centroids[c]= (n_observed_c*self.class_centroids[c]+ self.dataset.x[new_query_id])/(n_observed_c+1)
+        return self.class_centroids
+    
+    def shifted_query(self, M, deg, K=5, reinitialize=False, hard_threshold= 0.0):
+        # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
+        if len(self.dataset.queries)==0 or reinitialize:
+            self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
+
+        for _ in range(M):
+            # get the unlabeled point with highest out-degree
+            c_id, n_options, max_out_degree = self.get_highest_out_degree()
+
+            # Add point, shift points centroids that conflict with this points in the direction of class centroids (if they exist)
+            self.lims, self.D, self.I = shift_covering_centroids(self.dataset, c_id, self.lims_ref, self.D_ref,
+                                                                       self.I_ref, self.lims, self.D, self.I)
+            
+            # update class centroids
+            self.class_centroids = self.update_class_centroids(c_id)
+
+            # observe the newest points
+            self.dataset.observe(c_id, self.dataset.radiuses[c_id])
+
         return max_out_degree, n_options
 
 
+
 class BALDSampler(ActiveLearner):
-    def __init__(self, dataset, n_classes, model=None):
+    def __init__(self, dataset, model=None):
 
         super().__init__(dataset, model)
         self.name = "BALD Sampler"
-        self.n_classes= n_classes
+        self.n_classes= self.dataset.n_classes
     def query(self, M, K=5, B=1, n_initial=1):
 
         assert((M>=self.n_classes)or(len(self.dataset.queries)>0))
