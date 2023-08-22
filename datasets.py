@@ -4,7 +4,7 @@ import seaborn as sns
 from sklearn.cluster import KMeans
 from sklearn.datasets import make_blobs
 from sklearn.svm import SVC
-
+import h5py
 class ActiveDataset:
     def __init__(self, n_points, random_state=None):
         self.n_points = n_points
@@ -246,4 +246,21 @@ class CIFAR_simclr(ActiveDataset):
         y = np.load(self.path + f"{str}_targets.npy")
 
         return x, y.squeeze()
+
+class CHEXPERT_remedis(ActiveDataset):
+    def __init__(self, type:str, random_state=None):
+        # type should be one of "train", "test", "val"
+        self.type= type
+        #TODO: normalise features??
+        n_points= 50*16
+        #TODO: Change to right path once all features are extracted
+        self.path= f"/Users/victoriabarenne/chexpert_features/"
+        super(CHEXPERT_remedis, self).__init__(n_points, random_state)
+        self.C=5
+    def generate_data(self):
+        h5 = h5py.File(self.path+ f'{self.type}.hdf5', 'r')
+        x = h5['features_50'][:]
+        y= np.load(self.path+f"targets_{self.type}.npy")
+        return x, y
+
 

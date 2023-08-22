@@ -2,36 +2,45 @@ from sklearn.metrics import accuracy_score
 from sklearn.neighbors import KNeighborsClassifier
 import torch.nn as nn
 import torch
+import faiss
+import numpy as np
+class ClassifierNN:
+    def __init__(self, k, dataset, dataset_name, running_cluster=False):
+        assert(k>=1)
+        self.k=k
+        self.n_features= dataset.x.shape[1]
+        self.n_classes= dataset.C
+        self.index = faiss.IndexFlatL2(self.n_features)  # build the index
+        self.dataset_name= dataset_name
+        self.running_cluster= running_cluster
+    def fit_all(self, x_train, y_train):
+        self.index = faiss.IndexFlatL2(self.n_features)  # build the index
+        self.index.add(x_train.astype('float32'))
+        self.x_train= x_train
+        self.y_train= y_train
 
-class Classifier1NN:
-    def __init__(self, train_dataset):
-        self.train_dataset = train_dataset
-        self.model = KNeighborsClassifier(n_neighbors=1)
-
-        if len(self.train_dataset.queries) > 0:
-            self.update()
-
-    def update(self):
-        '''
-        Refits the classifier using new queries
-        '''
-        assert (len(self.train_dataset.queries) > 0)
-        self.model.fit(self.train_dataset.x[self.train_dataset.queries, :],
-                       self.train_dataset.y[self.train_dataset.queries])
-        self.predicted_labels = self.model.predict(self.train_dataset.x)
-        self.accuracy = coclust(self.predicted_labels, self.train_dataset.y)
-
-    def predict(self, new_data=None):
-        if new_data is None:
-            return self.model.predict(self.train_dataset.x)
+    def predict(self, x_test):
+        _, I = self.index.search(x_test.astype('float32'), self.k)
+        idx = I
+        y_pred= self.y_train[idx]
+        if len(self.y_train.shape)>1:
+            y_pred = y_pred.reshape(len(x_test), self.y_train.shape[1])
         else:
-            return self.model.predict(new_data.x)
+            y_pred = y_pred.reshape(len(x_test), )
+        return y_pred
 
-    def get_accuracy(self, new_data=None):
-        if new_data is None:
-            return accuracy_score(self.train_dataset.y, self.predict(self.train_dataset))
-        else:
-            return accuracy_score(new_data.y, self.predict(new_data))
+    def score_accuracy(self, x_test, y_test):
+        y_pred= self.predict(x_test)
+        return np.mean(y_test==y_pred)
+
+    def score_auc(self, x_test, y_test):
+        assert(self.running_cluster)
+        import tensorflow as tf
+        y_pred = self.predict(x_test)
+        auc= tf.keras.metrics.AUC(y_test, y_pred).numpy()
+        return auc
+
+
 
 ## COPIED FROM SCAN LIBRARY
 class ContrastiveModel(nn.Module):

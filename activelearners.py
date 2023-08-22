@@ -5,12 +5,11 @@ import numpy as np
 import seaborn as sns
 
 from clustering import ClusteringAlgo
-from helper import get_radius_faiss, adjacency_graph_faiss, remove_incoming_edges_faiss, update_adjacency_radius_faiss, \
-    reduce_intersected_balls_faiss, get_knn_weighted_radiuses
-from helper import shift_covering_centroids, reduce_all_interesected_balls_faiss
+from utils.faiss_graphs import adjacency_graph_faiss, remove_incoming_edges_faiss, update_adjacency_radius_faiss
+from utils.reduction_methods import shift_covering_centroids, reduce_all_interesected_balls_faiss, reduce_intersected_balls_faiss, get_knn_weighted_radiuses, get_cover
+from utils.hyperparameters import get_radius_faiss, get_init_radiuses, floor_twodecimals
 from sklearn.cluster import KMeans
 from metrics import kl_divergence
-from helper import get_cover
 
 from IPython import embed
 
@@ -72,37 +71,45 @@ class RandomSampler(ActiveLearner):
 class ProbCoverSampler_Faiss(ActiveLearner):
     def __init__(self, dataset, purity_threshold,
                  clustering: ClusteringAlgo,
-                 plot=[False, False],
-                 search_range=[0, 1.0], search_step=0.01,
+                 algorithm: str,
+                 plot_clustering=False,
                  radius= None,
+                 hard_thresholding= False,
+                 compute_graph=True,
                  model=None):
 
         super().__init__(dataset, model)
         self.name = "ProbCover Sampler"
         self.clustering = clustering
-
-        plot_clustering = plot[0]
-        plot_unpure_balls = plot[1]
+        self.algorithm= algorithm
+        self.purity_threshold = purity_threshold
 
         # Get pseudo labels
         self.pseudo_labels = self.clustering.pseudo_labels
         if plot_clustering:
             self.clustering.plot()
 
-        self.purity_threshold = purity_threshold
-
-        # Get radius for given purity threshold
-        if radius is None:
-            self.radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, search_range,
-                                           search_step,
-                                           plot_unpure_balls)
-        else:
-            self.radius= radius
-
+        # Initialize self.radius and self.hard_threshold
+        self.initialize_radiuses(radius, hard_thresholding)
         # Initialize the graph
-        self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
-        self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
+        if compute_graph:
+            self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
+            self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
+        else:
+            a=0
+            #TODO: Implement graph initialization by reading the lims_ref, D_ref, I_ref from a file
         self.dataset.radiuses = np.repeat(self.radius, len(self.dataset.x))
+
+
+    def initialize_radiuses(self, radius, hard_thresholding):
+        if radius is not None:
+            self.radius = radius
+        else:
+            self.radius, _ = get_init_radiuses(self.purity_threshold, self.dataset, self.pseudo_labels)
+
+        self.hard_threshold = floor_twodecimals(self.radius/np.sqrt(2)) if hard_thresholding else 0
+        print(f"Active Learner Initialized with radius {self.radius} and hardthreshold {self.hard_threshold}")
+
 
     def update_radius(self, new_radius):
         self.radius = new_radius
@@ -111,12 +118,11 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.lims_ref, self.D_ref, self.I_ref  = remove_incoming_edges_faiss(self.dataset, self.lims_ref, self.D_ref, self.I_ref)
         self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
 
-    def update_labeled(self, plot_clustering=False):
-
-        self.clustering.fit_labeled(self.dataset.queries)
-        self.pseudo_labels = self.clustering.pseudo_labels
-        new_radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, [0, 10], 0.01)
-        self.update_radius(new_radius)
+    # def update_labeled(self, plot_clustering=False):
+    #     self.clustering.fit_labeled(self.dataset.queries)
+    #     self.pseudo_labels = self.clustering.pseudo_labels
+    #     new_radius = get_radius_faiss(self.purity_threshold, self.dataset.x, self.pseudo_labels, [0, 10], 0.01)
+    #     self.update_radius(new_radius)
 
     def get_highest_out_degree(self):
         out_degrees = self.lims[1:] - self.lims[:-1]
@@ -135,13 +141,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if len(self.dataset.queries)==0 or reinitialize:
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
-        for _ in range(M):    
-            if args.hard_threshold>0:
-                new_radiuses= self.dataset.radiuses.copy()
-                new_radiuses[new_radiuses<= args.hard_threshold]= args.hard_threshold
-                self.lims, self.D, self.I= update_adjacency_radius_faiss(self.dataset, new_radiuses, 
-                                                                         self.lims_ref, self.D_ref, self.I_ref, 
-                                                                         self.lims, self.D, self.I)            
+        for _ in range(M):           
             # get the unlabeled point with highest out-degree
             c_id, n_options, max_out_degree = self.get_highest_out_degree()
             # Remove all incoming edges to the points covered by c_id
@@ -149,7 +149,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I, c_id)
         return max_out_degree, n_options
 
-    def adaptive_query(self, M, args, reinitialize=False):
+    def adpc_query(self, M, args, reinitialize=False):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if len(self.dataset.queries)==0 or reinitialize:
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
@@ -158,8 +158,8 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             # Update initial radiuses using some weighted average of the radiuses of the knn 
             if len(self.dataset.queries) > 0:
                 new_radiuses= get_knn_weighted_radiuses(self.dataset, args.K, args.gauss, self.radius)
-                if args.hard_threshold>0:
-                    new_radiuses[new_radiuses<= args.hard_threshold]= args.hard_threshold
+                if self.hard_threshold>0:
+                    new_radiuses[new_radiuses<= self.hard_threshold]= self.hard_threshold
 
                 self.lims, self.D, self.I = update_adjacency_radius_faiss(self.dataset, new_radiuses, self.lims_ref,
                                                                           self.D_ref, self.I_ref, self.lims, self.D,
@@ -173,8 +173,8 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                                                                        self.I_ref, self.lims, self.D, self.I,
                                                                        args.gamma, args.reduction_method)
             
-            if args.hard_threshold>0:
-                self.dataset.radiuses[self.dataset.radiuses<= args.hard_threshold]= args.hard_threshold
+            if self.hard_threshold>0:
+                self.dataset.radiuses[self.dataset.radiuses<= self.hard_threshold]= self.hard_threshold
             self.dataset.observe(c_id, self.dataset.radiuses[c_id])
 
         return max_out_degree, n_options

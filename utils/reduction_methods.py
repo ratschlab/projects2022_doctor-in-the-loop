@@ -1,8 +1,6 @@
-import faiss
-import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
-from IPython import embed
+from utils.faiss_graphs import update_adjacency_radius_faiss
+import faiss
 
 def get_cover(algorithm, dataset, lims_ref, D_ref, I_ref):
     #get the percentage of datapoints within the radius of a labeled point
@@ -53,7 +51,13 @@ def get_pessimistic_radiuses(dataset, new_query_id, gamma):
     diff_radiuses = dataset.radiuses[dataset.queries] + rc - dist_to_labeled
 
     #Get points with balls that intersect but have different labels and reduce their radius
-    mask_pessimistic = (diff_radiuses > 0) * (dataset.y[new_query_id] != dataset.y[dataset.queries])
+    if len(dataset.y.shape)>1:
+        if dataset.y.shape[1]>1:
+            mask_pessimistic = (diff_radiuses > 0) * np.all(dataset.y[new_query_id] != dataset.y[dataset.queries],
+                                                                axis=1)
+    else:
+        mask_pessimistic = (diff_radiuses > 0) * (dataset.y[new_query_id] != dataset.y[dataset.queries])
+
     pessimistic_radiuses[dataset.queries[mask_pessimistic]]= np.maximum(0, dataset.radiuses[dataset.queries]-gamma*diff_radiuses)[mask_pessimistic]
 
     if mask_pessimistic.any():
@@ -70,7 +74,6 @@ def get_knn_weighted_radiuses(dataset, K, deg, radius):
 
     gauss_distances = np.exp(-D_neighbours ** deg / new_radiuses[dataset.labeled == 0].reshape(-1, 1) ** deg)
     use_self = True
-
     if use_self:
         norm = (gauss_distances.sum(axis=1, keepdims=True) + 1)
         alpha = (1 / norm)[:, 0]
@@ -85,54 +88,6 @@ def get_knn_weighted_radiuses(dataset, K, deg, radius):
 
     return new_radiuses
 
-def adjacency_graph_faiss(x: np.array, initial_radius: float):
-    n_features = x.shape[1]
-    index = faiss.IndexFlatL2(n_features)  # build the index
-    index.add(x.astype('float32'))
-    lims, D, I = index.range_search(x.astype('float32'), initial_radius ** 2)  # because faiss uses squared L2 error
-    return lims, D, I
-
-
-def remove_incoming_edges_faiss(dataset, lims, D, I, query_idx=None):
-    if len(dataset.queries) > 0:
-        if query_idx is None:
-            query_idx = dataset.queries
-        if isinstance(query_idx, np.int64):
-            query_idx = np.array([query_idx])
-        # Get all covered
-        covered = np.array([])
-        for u in query_idx:
-            # TODO: improve this
-            covered = np.concatenate((covered, I[lims[u]:lims[u + 1]]), axis=0)
-        covered = np.unique(covered)
-        I_covered_bool = np.isin(I, covered)
-        I_covered_idx = np.where(I_covered_bool)[0]
-        # Remove all incoming edges to the covered vertices
-        I_split = np.split(I_covered_bool, lims)[1:-1]
-        n_covered = np.array([I_split[u].sum() for u in range(len(dataset.x))], dtype=int)
-
-        lims[1:] = lims[1:] - np.cumsum(n_covered)
-        I = np.delete(I, I_covered_idx)
-        D = np.delete(D, I_covered_idx)
-    return lims, D, I
-
-
-def update_adjacency_radius_faiss(dataset, new_radiuses, lims_ref, D_ref, I_ref, lims, D, I):
-    assert (len(dataset.radiuses) == len(new_radiuses))
-    assert (lims_ref[-1] == D_ref.shape[0] == I_ref.shape[0])
-    assert (lims[-1] == D.shape[0] == I.shape[0])
-
-    if (dataset.radiuses != new_radiuses).any():
-        R = np.repeat(new_radiuses, repeats=(lims_ref[1:] - lims_ref[:-1]).astype(int))
-        mask = D_ref < R ** 2
-        I, D = I_ref[mask], D_ref[mask]
-        mask_split = np.split(mask, lims_ref)[1:-1]
-        not_covered = np.array([np.invert(mask_split[u]).sum() for u in range(len(dataset.x))], dtype=int)
-        lims[1:] = lims_ref[1:] - np.cumsum(not_covered)
-        lims, D, I = remove_incoming_edges_faiss(dataset, lims, D, I)
-
-    dataset.radiuses = new_radiuses
-    return lims, D, I
 
 # Condition to reduce radiuses is if ri+rj>d or ri+rj-d>0 or diff>0
 # The way we reduce the radiuses right now is ri= ri-diff/2 and rj=rj-diff/2 such that ri+rj= ri+rj-diff=d --> the two balls don't intersect at all anymore
@@ -185,18 +140,8 @@ def shift_covering_centroids(dataset, radius, class_centroids, point_centroids, 
             # replace them in the list of neightbours for query i
             # adjust lims, D, I
             # remove all incoming edges 
-            
-
-
-              
-        
-
-
-
-
-
-
-
+                    
+    
 def reduce_all_interesected_balls_faiss(dataset, lims_ref, D_ref, I_ref, lims, D, I, gamma= 0.5, reduction_method= "pessimistic"):
     pessimistic_radiuses = dataset.radiuses.copy()
     a = np.repeat(dataset.x[dataset.queries, :][:, :, None], len(dataset.queries), axis=-1)
@@ -223,77 +168,3 @@ def reduce_all_interesected_balls_faiss(dataset, lims_ref, D_ref, I_ref, lims, D
 
 
     
-
-def get_nn_faiss(x: np.array):
-    n_features = x.shape[1]
-    index = faiss.IndexFlatL2(n_features)  # build the index
-    index.add(x.astype('float32'))
-    D, I = index.search(x.astype('float32'), 2)
-    idx = I[:, 1]
-    return idx
-
-
-def get_purity_faiss(x, pseudo_labels, nn_idx, radius, plot_unpure_balls=False):
-    """
-    Args:
-        x: np.array
-        pseudo_labels: labels predicted by some clustering algorithm
-        nn_idx: id of the nearest neighbour of each point
-        radius: purity radius
-
-    Returns:
-        purity(radius)
-    """
-    purity = np.zeros(len(x), dtype=int)
-    lims, D, I = adjacency_graph_faiss(x, radius)
-
-    for u in range(len(x)):
-        # covered_vertices = np.where(graph[u, :] == 1)[0]
-        covered_vertices = I[lims[u]:lims[u + 1]]
-        purity[u] = int(np.all(pseudo_labels[nn_idx[covered_vertices]] == pseudo_labels[nn_idx[u]]))
-
-    if plot_unpure_balls:
-        fig, ax = plt.subplots()
-        ax.axis('equal')
-        sns.scatterplot(x=x[:, 0], y=x[:, 1], hue=pseudo_labels, palette="Set2")
-        for u in range(len(x)):
-            if purity[u] == 0:
-                plt.plot(x[u, 0], x[u, 1], color="red", marker="P")
-                ax.add_patch(plt.Circle((x[u, 0], x[u, 1]), radius, color='red', fill=False, alpha=0.5))
-        plt.title(f"Points that are not pure and their covering balls of radius {radius}")
-        plt.show()
-
-    return np.mean(purity)
-
-
-def get_radius_faiss(alpha: float, x: np.array, pseudo_labels,
-                     search_range=[0.5, 3.5], search_step=0.05, plot_unpure_balls=False):
-    """
-    Args:
-        alpha: purity threshold
-        x: np.array
-        k: number of classes in the data
-        graph: adjacency matrix with 0 diagonals, an edge for points in the B-delta ball
-    Returns:
-        purity_radius: min{r: purity(r)>=alpha}
-    """
-
-    # Get the indices of the 1 nearest neighbours for each point
-    nn_idx = get_nn_faiss(x)
-    # Radiuses for the search
-    radiuses = np.arange(search_range[0], search_range[1], search_step)
-
-    while len(radiuses) > 1:
-        id = int(len(radiuses) / 2)
-        purity = get_purity_faiss(x, pseudo_labels, nn_idx, radiuses[id])
-
-        if purity >= alpha:
-            radiuses = radiuses[id:]
-        else:
-            radiuses = radiuses[:id]
-    purity_radius = radiuses[0]
-
-    if plot_unpure_balls:
-        get_purity_faiss(x, pseudo_labels, nn_idx, purity_radius, True)
-
-    return purity_radius

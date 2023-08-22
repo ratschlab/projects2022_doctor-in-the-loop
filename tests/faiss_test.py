@@ -2,8 +2,8 @@ import numpy as np
 import faiss
 from IPython import embed
 from datasets import PointClouds, CenteredCircles
-from helper import adjacency_graph, get_nearest_neighbour
-from helper import adjacency_graph_faiss, get_radius_faiss, get_purity_faiss, get_nn_faiss
+from utils.faiss_graphs import adjacency_graph, get_nearest_neighbour
+from utils.faiss_graphs import adjacency_graph_faiss, get_radius_faiss, get_purity_faiss, get_nn_faiss
 from activelearners import ProbCoverSampler_Faiss
 from clustering import MyKMeans, MySpectralClustering, OracleClassifier
 import seaborn as sns

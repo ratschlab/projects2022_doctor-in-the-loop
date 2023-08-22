@@ -4,7 +4,6 @@ import torchvision
 from torchvision.transforms import Resize, Compose, ToTensor, Normalize, CenterCrop
 import torch
 from torch.utils.data import Dataset
-from IPython import embed
 import os
 import argparse
 import sys
