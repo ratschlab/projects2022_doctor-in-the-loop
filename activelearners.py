@@ -11,8 +11,6 @@ from utils.hyperparameters import get_radius_faiss, get_init_radiuses, floor_two
 from sklearn.cluster import KMeans
 from metrics import kl_divergence
 
-from IPython import embed
-
 class ActiveLearner:
     def __init__(self, dataset, model=None):
         self.dataset = dataset
@@ -100,7 +98,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             #TODO: Implement graph initialization by reading the lims_ref, D_ref, I_ref from a file
         self.dataset.radiuses = np.repeat(self.radius, len(self.dataset.x))
 
-
     def initialize_radiuses(self, radius, hard_thresholding):
         if radius is not None:
             self.radius = radius
@@ -153,7 +150,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if len(self.dataset.queries)==0 or reinitialize:
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
-
         for _ in range(M):
             # Update initial radiuses using some weighted average of the radiuses of the knn 
             if len(self.dataset.queries) > 0:
@@ -167,7 +163,6 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             
             # get the unlabeled point with highest out-degree
             c_id, n_options, max_out_degree = self.get_highest_out_degree()
-
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
             self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
                                                                        self.I_ref, self.lims, self.D, self.I,
@@ -193,7 +188,8 @@ class ProbCoverSampler_Faiss(ActiveLearner):
                 print(f"Reducing the radius until the cover >= {args.cover_threshold} is no longer satisfied")
                 while cover >= args.cover_threshold:
                     self.update_radius(self.radius*args.eps)
-                print(f"New radius is {self.radius}")
+                    cover= get_cover("coverpc", self.dataset, self.lims_ref, self.D_ref, self.I_ref)
+                print(f"New radius is {self.radius} and cover is {cover*100}")
 
                 # query a point with this new radius
                 max_out_degree, n_options= self.query(1, args)

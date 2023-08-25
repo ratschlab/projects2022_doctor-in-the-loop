@@ -5,6 +5,9 @@ from sklearn.cluster import KMeans
 from sklearn.datasets import make_blobs
 from sklearn.svm import SVC
 import h5py
+import torch
+import torch.nn.functional as F
+
 class ActiveDataset:
     def __init__(self, n_points, random_state=None):
         self.n_points = n_points
@@ -227,14 +230,17 @@ class TwoMoons(ActiveDataset):
 
 
 class CIFAR_simclr(ActiveDataset):
-    def __init__(self, dataset, n_epochs, train, normalized= True, random_state=None):
+    def __init__(self, dataset, n_epochs, train, cluster= False, normalized= True, random_state=None):
         # TODO Change path so that it works in general
         self.n_epochs = n_epochs
         self.dataset= dataset
         self.train= train
         self.normalized= normalized
         n_points= 50000 if self.train else 10000
-        self.path = f"./data/scan-simclr-resnet18/{self.dataset}/{self.n_epochs}epochs/"
+        if cluster:
+            self.path = f"/cluster/work/grlab/projects/projects2022_doctor-in-the-loop/data/scan-simclr-resnet18/{self.dataset}/{self.n_epochs}epochs/"
+        else:
+            self.path = f"/Users/victoriabarenne/thesis_experiments/data/scan-simclr-resnet18/{self.dataset}/{self.n_epochs}epochs/"
         super(CIFAR_simclr, self).__init__(n_points, random_state)
 
     def generate_data(self):
@@ -248,19 +254,31 @@ class CIFAR_simclr(ActiveDataset):
         return x, y.squeeze()
 
 class CHEXPERT_remedis(ActiveDataset):
-    def __init__(self, type:str, random_state=None):
+    def __init__(self, type:str, normalize= True, cluster=False, random_state=None):
         # type should be one of "train", "test", "val"
         self.type= type
-        #TODO: normalise features??
-        n_points= 50*16
-        #TODO: Change to right path once all features are extracted
-        self.path= f"/Users/victoriabarenne/chexpert_features/"
+        if type=="train":
+            n_points= 201055
+        elif type=="valid":
+            n_points= 9027
+        elif type=="test":
+            n_points=13332
+
+        self.normalize=normalize
+        if cluster:
+            self.path= f"/cluster/work/grlab/projects/projects2022_doctor-in-the-loop/data/chexpert_features/"
+        else:
+            self.path= f"/Users/victoriabarenne/thesis_experiments/data/chexpert_features/"
         super(CHEXPERT_remedis, self).__init__(n_points, random_state)
         self.C=5
+
     def generate_data(self):
-        h5 = h5py.File(self.path+ f'{self.type}.hdf5', 'r')
-        x = h5['features_50'][:]
-        y= np.load(self.path+f"targets_{self.type}.npy")
+        x = np.load(self.path+f"features_{self.type}.npy")
+        y = np.load(self.path+f"targets_{self.type}.npy")
+
+        if self.normalize:
+            x = F.normalize(torch.from_numpy(x), dim=1).numpy()
+
         return x, y
 
 

@@ -37,7 +37,7 @@ class ClassifierNN:
         assert(self.running_cluster)
         import tensorflow as tf
         y_pred = self.predict(x_test)
-        auc= tf.keras.metrics.AUC(y_test, y_pred).numpy()
+        auc= tf.keras.metrics.AUC(multi_label=True)(y_test, y_pred).numpy()
         return auc
 
 

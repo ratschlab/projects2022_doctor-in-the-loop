@@ -16,46 +16,56 @@ def get_data(args):
         dataset_test = PointClouds(cluster_centers, cluster_std, cluster_samples // 2, random_state=2)
 
         if args.budget=="low":
-            eval_freq= np.concatenate((np.repeat(1, 100), np.repeat(5, 20),
-                                       np.repeat(10, 10), np.repeat(20,5),
-                                       np.repeat(50, 8), np.repeat(100,2)
-                                       ))
+            eval_freq = np.concatenate((np.repeat(1, 50), np.repeat(2, 25),
+                                        np.repeat(5, 20), np.repeat(10, 20),
+                                        np.repeat(50, 6), np.repeat(100, 3),
+                                        np.repeat(200, 10),
+                                        ))  # 3000
         elif args.budget=="high":
             eval_freq = np.concatenate((np.repeat(1, 50), np.repeat(2, 25),
                                         np.repeat(5, 20), np.repeat(10, 20),
                                         np.repeat(50, 6), np.repeat(100, 3),
                                         np.repeat(200, 20),
-                                        ))
+                                        )) #5000
         elif args.budget=="full":
             eval_freq = np.concatenate((np.repeat(1, 50), np.repeat(2, 25),
                                         np.repeat(5, 20), np.repeat(10, 20),
                                         np.repeat(50, 6), np.repeat(100, 3),
                                         np.repeat(200, 20), np.repeat(500, 10),
-                                        ))
+                                        )) #10000
 
-    elif args.dataset=="cifar10" or args.dataset=="cifar100":
-        dataset= CIFAR_simclr(args.dataset, args.n_epochs, train=True)
-        dataset_test= CIFAR_simclr(args.dataset, args.n_epochs, train=False)
-        
+    elif args.dataset in ["cifar10","cifar100", "chexpert"]:
+        if args.dataset in ["cifar10", "cifar100"]:
+            dataset= CIFAR_simclr(args.dataset, args.n_epochs, train=True, cluster=args.running_cluster)
+            dataset_test= CIFAR_simclr(args.dataset, args.n_epochs, train=False, cluster=args.running_cluster)
+        elif args.dataset=="chexpert":
+            dataset = CHEXPERT_remedis(type="train", cluster=args.running_cluster)
+            dataset_test = CHEXPERT_remedis(type="test", cluster=args.running_cluster)
+
         eval_freq = np.concatenate((np.repeat(1, 100), np.repeat(2, 50),
                                     np.repeat(5, 20), np.repeat(10, 20), np.repeat(20, 25),
                                    np.repeat(50, 20), np.repeat(100,40),
                                     np.repeat(200,20), np.repeat(500, 10))) #15000
-        if args.dataset=="cifar100":
+        if args.dataset in ["cifar100", "chexpert"] :
             eval_freq= np.concatenate((eval_freq, np.repeat(500, 20))) #25000
         if args.budget=="high":
             eval_freq= np.concatenate((eval_freq, np.repeat(500, 30))) # 30000 or 40000
+            if args.dataset=="chexpert":
+                eval_freq = np.concatenate((eval_freq, np.repeat(500, 10)))  # 45000
         if args.budget=="full":
             eval_freq= np.concatenate((np.repeat(1, 100), np.repeat(2, 50),
                                     np.repeat(5, 20), np.repeat(10, 20), np.repeat(20, 25),
                                        np.repeat(50, 20), np.repeat(100,40),
                                     np.repeat(200,20), np.repeat(500, 10),
                                        np.repeat(500,70))) # full 50000
+            if args.dataset=="chexpert":
+                eval_freq = np.concatenate((eval_freq, np.repeat(1000, 50),
+                                            np.repeat(5000, 20),
+                                            np.repeat(1055, 1)))  # 201055
 
-    elif args.dataset=="chexpert":
-        dataset= CHEXPERT_remedis(type="train")
-        dataset_test= CHEXPERT_remedis(type="test")
-        eval_freq= np.repeat(1, dataset.n_points)
+
+
+
 
     eval_points= np.cumsum(eval_freq)
         
@@ -68,10 +78,17 @@ def get_data(args):
     return dataset, dataset_test, run_path, eval_points
 
 def get_run_path(args):
-    if args.dataset=="toy":
-        path_root= f"./{args.run}/{args.dataset}_{args.separable}_{args.std}"
+    if args.running_cluster:
+        if args.dataset=="toy":
+            path_root= f"/cluster/work/grlab/projects/projects2022_doctor-in-the-loop/{args.run}/{args.dataset}_{args.separable}_{args.std}"
+        else:
+            path_root= f"/cluster/work/grlab/projects/projects2022_doctor-in-the-loop/{args.run}/{args.dataset}"
     else:
-        path_root= f"./{args.run}/{args.dataset}"
+        if args.dataset=="toy":
+            path_root= f"./{args.run}/{args.dataset}_{args.separable}_{args.std}"
+        else:
+            path_root= f"./{args.run}/{args.dataset}"
+
     if args.algorithm =="adpc":
         run_path= f"{path_root}/{args.n_epochs}_{args.gauss}_{args.tsh}_{args.hard_thresholding}_gamma{args.gamma}_{args.reduction_method}_{args.sd}"
     elif args.algorithm =="partialadpc": 
@@ -102,7 +119,7 @@ def fetching_run(algorithm: "str", run_path):
     assert(algorithm in ["full", "random", "pc", "adpc", "partialadpc", "coverpc"])
     if algorithm=="full":
         scores = pd.read_csv(run_path + f"/full.csv", index_col=0)[f"full_scores"].to_numpy()
-        queries= None
+        radiuses, degrees, options, covers, queries = None, None, None, None, None
     else:
         scores = pd.read_csv(run_path + f"/{algorithm}_scores.csv", index_col=0)[f"{algorithm}_scores"].to_numpy()
         queries = pd.read_csv(run_path + f"/{algorithm}_queries.csv", index_col=0)[f"{algorithm}_queries"].to_numpy()
@@ -113,5 +130,6 @@ def fetching_run(algorithm: "str", run_path):
             covers = pd.read_csv(run_path + f"/{algorithm}_covers.csv", index_col=0)[f"{algorithm}_covers"].to_numpy()
         else:
             radiuses, degrees, options, covers= None, None, None, None
+
 
     return scores, queries, radiuses, degrees, options, covers

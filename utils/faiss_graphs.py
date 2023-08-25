@@ -11,6 +11,20 @@ def adjacency_graph_faiss(x: np.array, initial_radius: float):
     lims, D, I = index.range_search(x.astype('float32'), initial_radius ** 2)  # because faiss uses squared L2 error
     return lims, D, I
 
+def adjacency_graph_faiss_fast(x: np.array, initial_radius: float, nlist=1000, nprobe=100):
+    n_features = x.shape[1]
+    quantizer = faiss.IndexFlatL2(n_features)  # build the index
+    index = faiss.IndexIVFFlat(quantizer, n_features, nlist, faiss.METRIC_L2)
+    # here we specify METRIC_L2, by default it performs inner-product search
+    assert not index.is_trained
+    index.train(x.astype('float32'))
+    assert index.is_trained
+    index.add(x.astype('float32'))
+    index.nprobe = nprobe
+    lims, D, I = index.range_search(x.astype('float32'), initial_radius ** 2)
+    return lims, D, I
+
+
 
 def remove_incoming_edges_faiss(dataset, lims, D, I, query_idx=None):
     if len(dataset.queries) > 0:

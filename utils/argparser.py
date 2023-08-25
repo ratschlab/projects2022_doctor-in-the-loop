@@ -27,7 +27,7 @@ def build_parser():
     parser.add_argument('--hard_thresholding', type=str2bool, default=False)
     parser.add_argument('--radius', type=float, required=False,
                         help="initial radius, if not set will be initialized using kmeans and the purity threshold")
-    parser.add_argument('--budget', type=str, required=False, default="normal",
+    parser.add_argument('--budget', type=str, required=False, default="low",
                         help="'low', 'high', 'full'")
     parser.add_argument('--running_cluster', type= str2bool, default=False)
     ### parameters to set for cifar experiments ###
