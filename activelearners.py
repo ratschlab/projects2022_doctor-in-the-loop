@@ -3,13 +3,14 @@ import faiss
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-
+import pandas as pd
 from clustering import ClusteringAlgo
-from utils.faiss_graphs import adjacency_graph_faiss, remove_incoming_edges_faiss, update_adjacency_radius_faiss
+from utils.faiss_graphs import adjacency_graph_faiss, remove_incoming_edges_faiss, update_adjacency_radius_faiss, adjacency_graph_faiss_fast
 from utils.reduction_methods import shift_covering_centroids, reduce_all_interesected_balls_faiss, reduce_intersected_balls_faiss, get_knn_weighted_radiuses, get_cover
 from utils.hyperparameters import get_radius_faiss, get_init_radiuses, floor_twodecimals
 from sklearn.cluster import KMeans
 from metrics import kl_divergence
+import os
 
 class ActiveLearner:
     def __init__(self, dataset, model=None):
@@ -70,10 +71,10 @@ class ProbCoverSampler_Faiss(ActiveLearner):
     def __init__(self, dataset, purity_threshold,
                  clustering: ClusteringAlgo,
                  algorithm: str,
+                 sd: int, 
                  plot_clustering=False,
                  radius= None,
                  hard_thresholding= False,
-                 compute_graph=True,
                  model=None):
 
         super().__init__(dataset, model)
@@ -81,21 +82,34 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.clustering = clustering
         self.algorithm= algorithm
         self.purity_threshold = purity_threshold
+        self.sd= sd
 
         # Get pseudo labels
         self.pseudo_labels = self.clustering.pseudo_labels
         if plot_clustering:
             self.clustering.plot()
-
-        # Initialize self.radius and self.hard_threshold
-        self.initialize_radiuses(radius, hard_thresholding)
+            
         # Initialize the graph
-        if compute_graph:
-            self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
-            self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
+        
+        if self.dataset.C==5: #IF THE DATASET IS CHEXPERT
+            self.save_path = f"/cluster/work/grlab/projects/projects2022_doctor-in-the-loop/chexpert_graphs/{self.purity_threshold}_{self.sd}/"
+            if os.path.exists(self.save_path): 
+                self.initialize_radiuses(radius, hard_thresholding)
+                self.load()
+                print(f"Active Learner Initialized with radius {self.radius} and hardthreshold {self.hard_threshold}")
+            else:
+                # Initialize self.radius and self.hard_threshold
+                os.makedirs(self.save_path)
+                self.initialize_radiuses(radius, hard_thresholding)
+                self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
+                self.save()
+                
         else:
-            a=0
-            #TODO: Implement graph initialization by reading the lims_ref, D_ref, I_ref from a file
+            # Initialize self.radius and self.hard_threshold
+            self.initialize_radiuses(radius, hard_thresholding)
+            self.lims_ref, self.D_ref, self.I_ref = adjacency_graph_faiss(self.dataset.x, self.radius)
+            
+        self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
         self.dataset.radiuses = np.repeat(self.radius, len(self.dataset.x))
 
     def initialize_radiuses(self, radius, hard_thresholding):
@@ -115,6 +129,19 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         self.lims_ref, self.D_ref, self.I_ref  = remove_incoming_edges_faiss(self.dataset, self.lims_ref, self.D_ref, self.I_ref)
         self.lims, self.D, self.I = self.lims_ref.copy(), self.D_ref.copy(), self.I_ref.copy()
 
+    def save(self):
+        pd.DataFrame({f'radius': self.radius, 
+                      f'hard_threshold': self.hard_threshold}, index=[0]).to_csv(f'{self.save_path}initial.csv')
+        np.save(f"{self.save_path}lims.npy", self.lims_ref)
+        np.save(f"{self.save_path}D.npy", self.D_ref)
+        np.save(f"{self.save_path}I.npy", self.I_ref)
+
+    def load(self):
+        self.lims_ref = np.load(f"{self.save_path}lims.npy")
+        self.D_ref= np.load(f"{self.save_path}D.npy")
+        self.I_ref= np.load(f"{self.save_path}I.npy")
+
+        
     # def update_labeled(self, plot_clustering=False):
     #     self.clustering.fit_labeled(self.dataset.queries)
     #     self.pseudo_labels = self.clustering.pseudo_labels
@@ -150,6 +177,7 @@ class ProbCoverSampler_Faiss(ActiveLearner):
         # Remove the incoming edges to covered vertices (vertices such that there exists labeled with graph[labeled,v]=1)
         if len(self.dataset.queries)==0 or reinitialize:
             self.lims, self.D, self.I = remove_incoming_edges_faiss(self.dataset, self.lims, self.D, self.I)
+
         for _ in range(M):
             # Update initial radiuses using some weighted average of the radiuses of the knn 
             if len(self.dataset.queries) > 0:
@@ -163,11 +191,13 @@ class ProbCoverSampler_Faiss(ActiveLearner):
             
             # get the unlabeled point with highest out-degree
             c_id, n_options, max_out_degree = self.get_highest_out_degree()
+
             # Add point, adapting its radius and the radius of all points with conflicting covered regions
             self.lims, self.D, self.I = reduce_intersected_balls_faiss(self.dataset, c_id, self.lims_ref, self.D_ref,
                                                                        self.I_ref, self.lims, self.D, self.I,
                                                                        args.gamma, args.reduction_method)
             
+
             if self.hard_threshold>0:
                 self.dataset.radiuses[self.dataset.radiuses<= self.hard_threshold]= self.hard_threshold
             self.dataset.observe(c_id, self.dataset.radiuses[c_id])

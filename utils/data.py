@@ -93,7 +93,7 @@ def get_run_path(args):
         run_path= f"{path_root}/{args.n_epochs}_{args.gauss}_{args.tsh}_{args.hard_thresholding}_gamma{args.gamma}_{args.reduction_method}_{args.sd}"
     elif args.algorithm =="partialadpc": 
         run_path= f"{path_root}/{args.n_epochs}_{args.gauss}_{args.tsh}_{args.hard_thresholding}_gamma{args.gamma}_{args.reduction_method}_{args.sd}"
-    elif args.algorithm == "benchmark":
+    elif args.algorithm in ["benchmark", "random", "full"]:
         run_path= f"{path_root}/{args.n_epochs}_{args.sd}"
     elif args.algorithm == "pc":
         run_path= f"{path_root}/{args.n_epochs}_{args.tsh}_{args.sd}"

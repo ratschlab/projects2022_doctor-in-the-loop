@@ -13,6 +13,7 @@ class ClassifierNN:
         self.index = faiss.IndexFlatL2(self.n_features)  # build the index
         self.dataset_name= dataset_name
         self.running_cluster= running_cluster
+            
     def fit_all(self, x_train, y_train):
         self.index = faiss.IndexFlatL2(self.n_features)  # build the index
         self.index.add(x_train.astype('float32'))

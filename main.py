@@ -40,7 +40,10 @@ def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_po
 
     scores, degrees, options, covers, aucs= [], [], [], [], []
     radiuses = np.empty(shape=(dataset.n_points, 0))
-    n_classes = len(np.unique(dataset.y))
+    if args.dataset=="chexpert":
+        n_classes= 5
+    else:
+        n_classes = len(np.unique(dataset.y))
     clustering = MyKMeans(dataset, n_classes)
     current_threshold= 0.1 # for partialadpc
     x_test, y_test = dataset_test.get_all_data()
@@ -51,9 +54,9 @@ def simulate_PC(run_path, algorithm: "str", dataset, dataset_test, args, eval_po
                                      args.tsh,
                                      clustering,
                                      args.algorithm,
-                                     radius= args.radius,
+                                     sd= args.sd,
                                      hard_thresholding=args.hard_thresholding)
-
+ 
     while len(dataset.queries)< eval_points.max():
         # Query new points
         if algorithm == "pc":
@@ -113,57 +116,6 @@ if __name__ == "__main__":
 
     if not os.path.exists(run_path):
         os.makedirs(run_path)
-
-    ####
-    from IPython import embed
-    embed()
-
-    import faiss
-    d = 2048  # dimension
-    nlist=1000
-    k=2
-    rad= 0.4
-    #old way
-    # index_bis = faiss.IndexFlatL2(d)
-    # index_bis.add(dataset.x.astype('float32'))
-    # D_bis, I_bis = index_bis.search(dataset_test.x.astype("float32"), k)
-    # lims_bis, D_bis, I_bis = index_bis.range_search(dataset_test.x.astype('float32'), 0.3 ** 2)  # because faiss uses squared L2 error
-    t1=time.time()
-    quantizer = faiss.IndexFlatL2(d)  # the other index
-    index = faiss.IndexIVFFlat(quantizer, d, nlist, faiss.METRIC_L2)
-    # here we specify METRIC_L2, by default it performs inner-product search
-    assert not index.is_trained
-    index.train(dataset.x.astype('float32'))
-    assert index.is_trained
-    t2= time.time()
-    print(f"Index trained in {t2-t1}")
-
-    index.add(dataset.x.astype('float32')[:3,:])  # add may be a bit slower as well
-    t3= time.time()
-    print(f"Data added in {t3-t2}")
-
-    index.nprobe=1
-    # D, I = index.search(dataset_test.x.astype('float32'), k)  # actual search
-    lims, D, I = index.range_search(dataset_test.x.astype('float32'), rad**2)
-    print(I[-5:])  # neighbors of the 5 last queries
-    t4 = time.time()
-    print(f"Data searched with 1 probe in {t4 - t3}")
-
-    index.nprobe = 10000 # The tradeoff between speed and accuracy is set via the nprobe parameter. Higher-> more accurate
-    DD, II = index.search(dataset_test.x.astype('float32'), k)  # actual search
-    lllims, DDD, III = index.range_search(dataset_test.x.astype('float32'), rad**2)
-
-    print(np.sum(II!=I))
-    t5 = time.time()
-    print(f"Data searched with 100 probes in {t5 - t4}")
-
-    from IPython import embed
-    embed()
-
-    ####
-
-
-
 
     # simulate the runs
     if args.algorithm=="benchmark":
